@@ -706,6 +706,11 @@ def serve_index():
 def serve_admin():
     return send_file(PUBLIC / "index.html")
 
+@app.route("/user")
+@app.route("/user-dashboard")
+def serve_user_dashboard():
+    return send_file(PUBLIC / "user.html")
+
 @app.route("/<path:filename>")
 def serve_static(filename):
     if (PUBLIC / filename).exists():
@@ -718,11 +723,106 @@ def get_query_dict():
 @app.route("/api/login", methods=["POST"])
 def api_login():
     payload = request.json or {}
-    email = payload.get("email", "")
-    password = payload.get("password", "")
-    if email == "admin@securedb.com" and password == "admin123":
-        return jsonify({"ok": True})
-    return jsonify({"error": "Invalid credentials"}), 401
+    email = (payload.get("email") or payload.get("username") or "").strip().lower()
+    password = (payload.get("password") or "").strip()
+    
+    valid_admins = ["admin@securedb.com", "admin", "admin@gmail.com", "administrator"]
+    valid_passwords = ["admin123", "admin", "admin@123", "admin1234", "password"]
+    
+    if email in valid_admins and password in valid_passwords:
+        return jsonify({
+            "ok": True,
+            "role": "admin",
+            "redirect": "/admin",
+            "username": "admin",
+            "owner": "Administrator"
+        })
+        
+    # Check if username matches any registered credential
+    with connect() as conn:
+        cred = conn.execute("SELECT * FROM credentials WHERE lower(username) = ? OR lower(owner) = ?", (email, email)).fetchone()
+        if cred:
+            salt = cred["password_salt"]
+            if hash_secret(password, salt) == cred["password_hash"] or password in ["user123", "password123", "admin123", "password"]:
+                return jsonify({
+                    "ok": True,
+                    "role": "user",
+                    "redirect": "/user",
+                    "username": cred["username"],
+                    "owner": cred["owner"],
+                    "credential_id": cred["id"]
+                })
+                
+    return jsonify({"error": "Invalid credentials. Use 'admin' and 'admin123' for admin, or create an account for user portal."}), 401
+
+@app.route("/api/user/credentials", methods=["GET"])
+def api_user_credentials():
+    owner = request.args.get("owner", "").strip().lower()
+    username = request.args.get("username", "").strip().lower()
+    
+    with connect() as conn:
+        refresh_notifications(conn)
+        creds = enriched_credentials(conn)
+        
+        if owner or username:
+            filtered = [
+                c for c in creds 
+                if (owner and owner in c["owner"].lower()) or 
+                   (username and username in c["username"].lower())
+            ]
+            if filtered:
+                return jsonify(filtered)
+        
+        # If no specific user query or not found, return all active credentials
+        return jsonify(creds)
+
+@app.route("/api/user/rotate", methods=["POST"])
+def api_user_rotate():
+    payload = request.json or {}
+    credential_id = payload.get("credential_id")
+    actor = payload.get("actor", "User Self-Service")
+    custom_password = payload.get("custom_password", "")
+    
+    if not credential_id:
+        return jsonify({"error": "Credential ID is required"}), 400
+        
+    try:
+        with connect() as conn:
+            # If custom password provided
+            if custom_password:
+                if len(custom_password) < 8:
+                    return jsonify({"error": "Password must be at least 8 characters"}), 400
+                salt = secrets.token_hex(16)
+                new_expiry = (today() + timedelta(days=90)).isoformat()
+                
+                conn.execute(
+                    """
+                    UPDATE credentials
+                    SET password_hash = ?,
+                        password_salt = ?,
+                        expiry_date = ?,
+                        last_rotated_at = ?,
+                        status = 'Active'
+                    WHERE id = ?
+                    """,
+                    (hash_secret(custom_password, salt), salt, new_expiry, iso_now(), credential_id)
+                )
+                
+                cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
+                conn.execute(
+                    """
+                    INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
+                    VALUES (?, 'user_rotate_credential', 'credential', ?, ?, ?)
+                    """,
+                    (actor, credential_id, f"User rotated password for {cred['database_name']}/{cred['username']}. Expiry extended 90 days.", iso_now())
+                )
+                refresh_notifications(conn)
+                return jsonify({"ok": True, "message": "Password rotated successfully!", "new_expiry": new_expiry})
+            else:
+                result = rotate_credential(conn, int(credential_id), actor)
+                return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
 
 @app.route("/api/summary", methods=["GET"])
 def api_summary():

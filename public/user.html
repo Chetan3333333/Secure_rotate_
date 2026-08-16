@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureDB | User Dashboard</title>
+
+    <!-- Google Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+    <style>
+        /* =========================================
+           GLOBAL STYLES & CSS VARIABLES
+        ========================================= */
+        :root {
+            --bg-body: #f4f7fb;
+            --bg-card: #ffffff;
+            --text-primary: #172033;
+            --text-muted: #64748b;
+            --text-light: #94a3b8;
+            --border-color: #e2e8f0;
+            --primary: #172033;
+            --primary-hover: #222f49;
+            --accent: #2563eb;
+            --success: #16a34a;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --card-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+            --radius-md: 14px;
+            --radius-lg: 20px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Poppins", sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* =========================================
+           NAVBAR
+        ========================================= */
+        .navbar {
+            background: #ffffff;
+            border-bottom: 1px solid var(--border-color);
+            padding: 0 32px;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+
+        .nav-brand-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--primary);
+            color: #ffffff;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .nav-brand-text h2 {
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .nav-brand-text span {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .user-chip {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f8fafc;
+            border: 1px solid var(--border-color);
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .user-avatar {
+            width: 28px;
+            height: 28px;
+            background: var(--primary);
+            color: #ffffff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 18px;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #ffffff;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border-color: var(--border-color);
+            color: var(--text-muted);
+        }
+
+        .btn-outline:hover {
+            background: #f1f5f9;
+            color: var(--text-primary);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: #ffffff;
+        }
+
+        .btn-success:hover {
+            background: #15803d;
+        }
+
+        /* =========================================
+           MAIN CONTAINER & LAYOUT
+        ========================================= */
+        .main-content {
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 30px 24px;
+            flex: 1;
+        }
+
+        /* =========================================
+           WELCOME HERO BANNER
+        ========================================= */
+        .welcome-hero {
+            background: linear-gradient(135deg, #172033 0%, #243352 100%);
+            color: #ffffff;
+            border-radius: var(--radius-lg);
+            padding: 32px 36px;
+            margin-bottom: 28px;
+            box-shadow: 0 15px 35px rgba(23, 32, 51, 0.15);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .welcome-hero h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .welcome-hero p {
+            font-size: 13px;
+            color: #cbd5e1;
+            max-width: 600px;
+            line-height: 1.6;
+        }
+
+        .hero-badges {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+
+        .badge-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        /* =========================================
+           STATS GRID
+        ========================================= */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-md);
+            padding: 22px;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--card-shadow);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            transition: transform 0.2s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .stat-icon.blue { background: #eff6ff; color: #2563eb; }
+        .stat-icon.green { background: #f0fdf4; color: #16a34a; }
+        .stat-icon.amber { background: #fffbeb; color: #d97706; }
+        .stat-icon.purple { background: #faf5ff; color: #9333ea; }
+
+        .stat-info h3 {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+
+        .stat-info span {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        /* =========================================
+           SECTION HEADERS
+        ========================================= */
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+        }
+
+        .section-header h2 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* =========================================
+           DATABASE CREDENTIALS CARDS
+        ========================================= */
+        .db-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 22px;
+            margin-bottom: 35px;
+        }
+
+        .db-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--card-shadow);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .db-card:hover {
+            border-color: #cbd5e1;
+            box-shadow: 0 15px 35px rgba(15, 23, 42, 0.1);
+        }
+
+        .db-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .db-title-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .db-engine-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: #f1f5f9;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .db-title h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .db-title span {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 20px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .status-badge.active { background: #dcfce7; color: #15803d; }
+        .status-badge.warning { background: #fef3c7; color: #b45309; }
+        .status-badge.expired { background: #fee2e2; color: #b91c1c; }
+
+        .db-details {
+            background: #f8fafc;
+            border-radius: var(--radius-md);
+            padding: 14px;
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .db-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .db-row span.label {
+            color: var(--text-muted);
+        }
+
+        .db-row span.val {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        /* Progress Bar for Expiry */
+        .expiry-bar-wrap {
+            margin-bottom: 18px;
+        }
+
+        .expiry-bar-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+
+        .expiry-progress {
+            width: 100%;
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .expiry-progress-fill {
+            height: 100%;
+            background: var(--success);
+            border-radius: 10px;
+            transition: width 0.4s ease;
+        }
+
+        .expiry-progress-fill.warning { background: var(--warning); }
+        .expiry-progress-fill.expired { background: var(--danger); }
+
+        .db-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: auto;
+        }
+
+        .db-actions .btn {
+            flex: 1;
+            justify-content: center;
+            padding: 10px;
+        }
+
+        /* =========================================
+           TOOLS & UTILITIES SECTION
+        ========================================= */
+        .tools-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 22px;
+            margin-bottom: 35px;
+        }
+
+        .tool-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-color);
+            padding: 24px;
+            box-shadow: var(--card-shadow);
+        }
+
+        .tool-card h3 {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Password generator widget */
+        .generator-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .gen-input {
+            flex: 1;
+            height: 42px;
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            padding: 0 14px;
+            font-family: monospace;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            background: #f8fafc;
+            outline: none;
+        }
+
+        .gen-options {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+
+        /* Activity list */
+        .activity-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .activity-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: 12px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .activity-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #f1f5f9;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        .activity-text strong {
+            color: var(--text-primary);
+        }
+
+        .activity-text span {
+            color: var(--text-muted);
+            display: block;
+            font-size: 10px;
+            margin-top: 2px;
+        }
+
+        /* =========================================
+           MODAL
+        ========================================= */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-card {
+            background: #ffffff;
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 25px 60px rgba(15, 23, 42, 0.25);
+            padding: 30px;
+            position: relative;
+            animation: modalPop 0.25s ease-out;
+        }
+
+        @keyframes modalPop {
+            from { transform: scale(0.95); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h3 {
+            font-size: 17px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            font-size: 18px;
+            color: var(--text-muted);
+            cursor: pointer;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            height: 44px;
+            border: 1px solid var(--border-color);
+            border-radius: 9px;
+            background: #f8fafc;
+            padding: 0 14px;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+            transition: 0.2s;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            border-color: var(--primary);
+            background: #ffffff;
+        }
+
+        /* =========================================
+           FOOTER
+        ========================================= */
+        footer {
+            background: #ffffff;
+            border-top: 1px solid var(--border-color);
+            padding: 20px;
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: auto;
+        }
+
+        @media (max-width: 768px) {
+            .tools-grid {
+                grid-template-columns: 1fr;
+            }
+            .welcome-hero {
+                padding: 24px;
+            }
+            .navbar {
+                padding: 0 16px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- =========================================
+         NAVBAR
+    ========================================= -->
+    <nav class="navbar">
+        <a href="/user" class="nav-brand">
+            <div class="nav-brand-icon">
+                <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <div class="nav-brand-text">
+                <h2>SecureDB</h2>
+                <span>User Security Command</span>
+            </div>
+        </a>
+
+        <div class="nav-actions">
+            <div class="user-chip">
+                <div class="user-avatar" id="navAvatar">U</div>
+                <span id="navUserName">User Account</span>
+            </div>
+            <button class="btn btn-primary" onclick="openAddModal()">
+                <i class="fa-solid fa-plus"></i>
+                Add Database
+            </button>
+            <button class="btn btn-outline" onclick="logout()">
+                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                Logout
+            </button>
+        </div>
+    </nav>
+
+    <!-- =========================================
+         MAIN CONTENT
+    ========================================= -->
+    <main class="main-content">
+
+        <!-- WELCOME HERO BANNER -->
+        <div class="welcome-hero">
+            <div>
+                <h1 id="welcomeGreeting">Welcome back, User</h1>
+                <p>Monitor your active database credentials, track expiration lifecycles, and perform zero-downtime rotation to maintain security compliance.</p>
+                <div class="hero-badges">
+                    <span class="badge-pill"><i class="fa-solid fa-vault"></i> Secure Vault Protected</span>
+                    <span class="badge-pill"><i class="fa-solid fa-fingerprint"></i> Multi-Factor Verified</span>
+                    <span class="badge-pill"><i class="fa-solid fa-clock-rotate-left"></i> 90-Day Policy Compliant</span>
+                </div>
+            </div>
+            <div>
+                <button class="btn btn-success" onclick="openGenerateModal()">
+                    <i class="fa-solid fa-key"></i>
+                    Rotate Password
+                </button>
+            </div>
+        </div>
+
+        <!-- STATS ROW -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon blue">
+                    <i class="fa-solid fa-database"></i>
+                </div>
+                <div class="stat-info">
+                    <h3 id="statTotalDb">0</h3>
+                    <span>Monitored Databases</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon amber">
+                    <i class="fa-solid fa-hourglass-half"></i>
+                </div>
+                <div class="stat-info">
+                    <h3 id="statNearestExpiry">--</h3>
+                    <span>Nearest Expiration</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon green">
+                    <i class="fa-solid fa-shield-check"></i>
+                </div>
+                <div class="stat-info">
+                    <h3 id="statCompliance">100%</h3>
+                    <span>Security Health</span>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon purple">
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                </div>
+                <div class="stat-info">
+                    <h3 id="statRotatedCount">0</h3>
+                    <span>Rotations Completed</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- MY DATABASES SECTION -->
+        <div class="section-header">
+            <h2>
+                <i class="fa-solid fa-server"></i>
+                My Monitored Databases
+            </h2>
+            <button class="btn btn-outline" onclick="loadUserCredentials()">
+                <i class="fa-solid fa-rotate-right"></i>
+                Refresh
+            </button>
+        </div>
+
+        <!-- DATABASE CARDS CONTAINER -->
+        <div class="db-grid" id="dbContainer">
+            <!-- Dynamic Database Cards Rendered Here -->
+            <div style="grid-column: 1/-1; text-align:center; padding: 40px; color: #94a3b8;">
+                <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+                <p style="margin-top: 10px; font-size: 13px;">Loading database credentials...</p>
+            </div>
+        </div>
+
+        <!-- TOOLS AND ACTIVITY GRID -->
+        <div class="tools-grid">
+
+            <!-- PASSWORD GENERATOR & STRENGTH TOOL -->
+            <div class="tool-card">
+                <h3>
+                    <i class="fa-solid fa-wand-magic-sparkles" style="color: #2563eb;"></i>
+                    Instant Strong Password Generator
+                </h3>
+                <p style="font-size: 12px; color: #64748b; margin-bottom: 14px;">Generate cryptographic enterprise-grade passwords matching strict database compliance rules.</p>
+                
+                <div class="generator-box">
+                    <input type="text" id="genOutput" class="gen-input" readonly value="SecDB!8xK9#mQ2">
+                    <button class="btn btn-primary" onclick="generateNewPassword()">
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                    <button class="btn btn-outline" onclick="copyGenPassword()">
+                        <i class="fa-solid fa-copy"></i>
+                    </button>
+                </div>
+
+                <div class="gen-options">
+                    <label><input type="checkbox" id="optSymbols" checked onchange="generateNewPassword()"> Special Symbols</label>
+                    <label><input type="checkbox" id="optNumbers" checked onchange="generateNewPassword()"> Numbers</label>
+                    <label><input type="checkbox" id="optUpper" checked onchange="generateNewPassword()"> Uppercase</label>
+                    <span>Length: <strong>16 chars</strong></span>
+                </div>
+            </div>
+
+            <!-- SECURITY ACTIVITY & ROTATION LOG -->
+            <div class="tool-card">
+                <h3>
+                    <i class="fa-solid fa-timeline" style="color: #16a34a;"></i>
+                    Recent Security Activity
+                </h3>
+                <ul class="activity-list" id="activityList">
+                    <li class="activity-item">
+                        <div class="activity-icon"><i class="fa-solid fa-check"></i></div>
+                        <div class="activity-text">
+                            <strong>Vault Connected & Authenticated</strong>
+                            <span>Active security session established</span>
+                        </div>
+                    </li>
+                    <li class="activity-item">
+                        <div class="activity-icon"><i class="fa-solid fa-shield"></i></div>
+                        <div class="activity-text">
+                            <strong>Credential Monitoring Active</strong>
+                            <span>Automated 90-day expiry threshold tracking</span>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- =========================================
+         ADD DATABASE MODAL
+    ========================================= -->
+    <div class="modal-overlay" id="addModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-database"></i> Add Database Connection</h3>
+                <button class="modal-close" onclick="closeModal('addModal')">&times;</button>
+            </div>
+
+            <form id="addDbForm" onsubmit="handleAddDatabase(event)">
+                <div class="form-group">
+                    <label>Database Engine</label>
+                    <select id="newDbType" required>
+                        <option value="PostgreSQL">PostgreSQL</option>
+                        <option value="MySQL">MySQL</option>
+                        <option value="Oracle">Oracle Database</option>
+                        <option value="SQL Server">Microsoft SQL Server</option>
+                        <option value="MongoDB">MongoDB Enterprise</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Database Name / Instance</label>
+                    <input type="text" id="newDbName" placeholder="e.g. Production_App_DB" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Database Username</label>
+                    <input type="text" id="newDbUser" placeholder="e.g. app_service_user" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Initial Password</label>
+                    <input type="password" id="newDbPassword" placeholder="Minimum 8 characters" minlength="8" required>
+                </div>
+
+                <div style="display:flex; gap:10px; margin-top:20px;">
+                    <button type="button" class="btn btn-outline" style="flex:1;" onclick="closeModal('addModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary" style="flex:1;" id="addDbBtn">
+                        <i class="fa-solid fa-plus"></i> Add Database
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- =========================================
+         ROTATE PASSWORD MODAL
+    ========================================= -->
+    <div class="modal-overlay" id="rotateModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-arrows-rotate"></i> Rotate Database Password</h3>
+                <button class="modal-close" onclick="closeModal('rotateModal')">&times;</button>
+            </div>
+
+            <form id="rotateForm" onsubmit="handleRotateSubmit(event)">
+                <input type="hidden" id="rotateCredId">
+
+                <div class="form-group">
+                    <label>Selected Database</label>
+                    <input type="text" id="rotateDbLabel" readonly style="background:#f1f5f9; font-weight:600;">
+                </div>
+
+                <div class="form-group">
+                    <label>New Password (Leave blank for automated generator)</label>
+                    <div style="display:flex; gap:6px;">
+                        <input type="text" id="customNewPassword" placeholder="Auto-generate or enter custom">
+                        <button type="button" class="btn btn-outline" onclick="fillGeneratedIntoRotate()">
+                            <i class="fa-solid fa-magic"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <p style="font-size: 11px; color: #64748b; margin-bottom: 15px;">
+                    <i class="fa-solid fa-circle-info"></i> Rotating will reset the expiration timer to 90 days and store the salted hash in the vault.
+                </p>
+
+                <div style="display:flex; gap:10px;">
+                    <button type="button" class="btn btn-outline" style="flex:1;" onclick="closeModal('rotateModal')">Cancel</button>
+                    <button type="submit" class="btn btn-success" style="flex:1;" id="confirmRotateBtn">
+                        <i class="fa-solid fa-check"></i> Execute Rotation
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+        <i class="fa-solid fa-shield-halved"></i> SecureDB User Command &nbsp;|&nbsp; Enterprise Database Security & Expiration Management
+    </footer>
+
+    <!-- =========================================
+         JAVASCRIPT LOGIC
+    ========================================= -->
+    <script>
+        let currentUser = null;
+        let userCredentials = [];
+
+        // Check authentication on load
+        document.addEventListener("DOMContentLoaded", () => {
+            const saved = localStorage.getItem("securedb_user");
+            if (saved) {
+                try {
+                    currentUser = JSON.parse(saved);
+                } catch(e) {
+                    currentUser = null;
+                }
+            }
+
+            if (!currentUser) {
+                // Default demo profile for seamless experience
+                currentUser = {
+                    username: "john.doe@company.com",
+                    owner: "John Doe",
+                    role: "user"
+                };
+            }
+
+            // Update UI profile
+            const displayName = currentUser.owner || currentUser.username || "User";
+            document.getElementById("navUserName").innerText = displayName;
+            document.getElementById("welcomeGreeting").innerText = `Welcome back, ${displayName}`;
+            document.getElementById("navAvatar").innerText = displayName.charAt(0).toUpperCase();
+
+            generateNewPassword();
+            loadUserCredentials();
+        });
+
+        // Fetch user credentials
+        async function loadUserCredentials() {
+            const container = document.getElementById("dbContainer");
+            container.innerHTML = `
+                <div style="grid-column: 1/-1; text-align:center; padding: 40px; color: #94a3b8;">
+                    <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+                    <p style="margin-top: 10px; font-size: 13px;">Loading database credentials...</p>
+                </div>
+            `;
+
+            try {
+                const ownerQuery = currentUser ? encodeURIComponent(currentUser.owner || currentUser.username || "") : "";
+                const response = await fetch(`/api/user/credentials?owner=${ownerQuery}&username=${ownerQuery}`);
+                userCredentials = await response.json();
+
+                if (!Array.isArray(userCredentials) || userCredentials.length === 0) {
+                    container.innerHTML = `
+                        <div style="grid-column: 1/-1; text-align:center; padding: 40px; background:white; border-radius:16px; border: 1px dashed #cbd5e1;">
+                            <i class="fa-solid fa-database fa-2x" style="color: #94a3b8; margin-bottom: 10px;"></i>
+                            <h3 style="font-size:16px; color:#172033;">No Database Connections Registered</h3>
+                            <p style="font-size:12px; color:#64748b; margin: 8px 0 16px;">Add your first database to start tracking password expiration and security compliance.</p>
+                            <button class="btn btn-primary" onclick="openAddModal()"><i class="fa-solid fa-plus"></i> Add Database</button>
+                        </div>
+                    `;
+                    updateStats([]);
+                    return;
+                }
+
+                renderDatabaseCards(userCredentials);
+                updateStats(userCredentials);
+            } catch (err) {
+                container.innerHTML = `
+                    <div style="grid-column: 1/-1; text-align:center; padding: 30px; color: #ef4444;">
+                        <i class="fa-solid fa-triangle-exclamation fa-2x"></i>
+                        <p style="margin-top: 10px;">Failed to load database credentials. Please try again.</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Render Cards
+        function renderDatabaseCards(creds) {
+            const container = document.getElementById("dbContainer");
+            container.innerHTML = "";
+
+            creds.forEach(cred => {
+                const days = cred.days_to_expiry;
+                let statusClass = "active";
+                let statusText = "Active & Healthy";
+                let fillClass = "";
+
+                if (days <= 0) {
+                    statusClass = "expired";
+                    statusText = "Expired";
+                    fillClass = "expired";
+                } else if (days <= 7) {
+                    statusClass = "warning";
+                    statusText = `Expires in ${days}d`;
+                    fillClass = "warning";
+                }
+
+                const progressPct = Math.max(5, Math.min(100, Math.round((Math.max(0, days) / 90) * 100)));
+
+                // Engine icon mapper
+                let iconClass = "fa-database";
+                const dbNameLower = (cred.database_name || "").toLowerCase();
+                if (dbNameLower.includes("postgre")) iconClass = "fa-server";
+                else if (dbNameLower.includes("mysql")) iconClass = "fa-cubes";
+                else if (dbNameLower.includes("oracle")) iconClass = "fa-circle-nodes";
+                else if (dbNameLower.includes("sql server")) iconClass = "fa-microchip";
+
+                const card = document.createElement("div");
+                card.className = "db-card";
+                card.innerHTML = `
+                    <div>
+                        <div class="db-header">
+                            <div class="db-title-wrap">
+                                <div class="db-engine-icon">
+                                    <i class="fa-solid ${iconClass}"></i>
+                                </div>
+                                <div class="db-title">
+                                    <h3>${escapeHtml(cred.database_name)}</h3>
+                                    <span>${escapeHtml(cred.username)}</span>
+                                </div>
+                            </div>
+                            <span class="status-badge ${statusClass}">${statusText}</span>
+                        </div>
+
+                        <div class="db-details">
+                            <div class="db-row">
+                                <span class="label">Owner:</span>
+                                <span class="val">${escapeHtml(cred.owner)}</span>
+                            </div>
+                            <div class="db-row">
+                                <span class="label">Expiry Date:</span>
+                                <span class="val">${escapeHtml(cred.expiry_date || "N/A")}</span>
+                            </div>
+                            <div class="db-row">
+                                <span class="label">Risk Rating:</span>
+                                <span class="val">${escapeHtml(cred.risk || "Low")}</span>
+                            </div>
+                        </div>
+
+                        <div class="expiry-bar-wrap">
+                            <div class="expiry-bar-header">
+                                <span>Lifecycle Expiration</span>
+                                <strong>${days > 0 ? days + ' days left' : 'Locked / Expired'}</strong>
+                            </div>
+                            <div class="expiry-progress">
+                                <div class="expiry-progress-fill ${fillClass}" style="width: ${progressPct}%;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="db-actions">
+                        <button class="btn btn-primary" onclick="openRotateModal(${cred.id}, '${escapeHtml(cred.database_name)} (${escapeHtml(cred.username)}')">
+                            <i class="fa-solid fa-arrows-rotate"></i> Rotate Password
+                        </button>
+                        <button class="btn btn-outline" onclick="copySecretRef('${escapeHtml(cred.secret_ref || 'vault://securerotate/' + cred.database_name + '/' + cred.username)}')">
+                            <i class="fa-solid fa-copy"></i> Secret URI
+                        </button>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        // Update stats
+        function updateStats(creds) {
+            document.getElementById("statTotalDb").innerText = creds.length;
+            
+            if (creds.length === 0) {
+                document.getElementById("statNearestExpiry").innerText = "None";
+                document.getElementById("statCompliance").innerText = "100%";
+                return;
+            }
+
+            const minDays = Math.min(...creds.map(c => c.days_to_expiry));
+            const expiredCount = creds.filter(c => c.days_to_expiry <= 0).length;
+
+            document.getElementById("statNearestExpiry").innerText = minDays <= 0 ? "Expired" : `${minDays} Days`;
+            document.getElementById("statCompliance").innerText = expiredCount === 0 ? "100%" : `${Math.round(((creds.length - expiredCount)/creds.length)*100)}%`;
+            document.getElementById("statRotatedCount").innerText = creds.filter(c => c.last_rotated_at).length;
+        }
+
+        // Rotate Modal
+        function openRotateModal(id, label) {
+            document.getElementById("rotateCredId").value = id;
+            document.getElementById("rotateDbLabel").value = label;
+            document.getElementById("customNewPassword").value = "";
+            document.getElementById("rotateModal").classList.add("active");
+        }
+
+        function openGenerateModal() {
+            if (userCredentials.length > 0) {
+                const first = userCredentials[0];
+                openRotateModal(first.id, `${first.database_name} (${first.username})`);
+            } else {
+                openAddModal();
+            }
+        }
+
+        function fillGeneratedIntoRotate() {
+            const gen = document.getElementById("genOutput").value;
+            document.getElementById("customNewPassword").value = gen;
+        }
+
+        async function handleRotateSubmit(event) {
+            event.preventDefault();
+            const id = document.getElementById("rotateCredId").value;
+            const customPass = document.getElementById("customNewPassword").value.trim();
+            const btn = document.getElementById("confirmRotateBtn");
+
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Rotating...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/user/rotate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        credential_id: id,
+                        custom_password: customPass,
+                        actor: currentUser ? currentUser.owner : "User Self-Service"
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    alert("Password rotated successfully!\n\nNew expiration date extended by 90 days.");
+                    closeModal("rotateModal");
+                    addActivity(`Password rotated for database ID #${id}`, "Just now");
+                    loadUserCredentials();
+                } else {
+                    alert("Rotation notice: " + (data.error || "Failed to rotate."));
+                }
+            } catch (err) {
+                alert("Network error during rotation.");
+            } finally {
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> Execute Rotation';
+                btn.disabled = false;
+            }
+        }
+
+        // Add Database Modal
+        function openAddModal() {
+            document.getElementById("addModal").classList.add("active");
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove("active");
+        }
+
+        async function handleAddDatabase(event) {
+            event.preventDefault();
+            const type = document.getElementById("newDbType").value;
+            const name = document.getElementById("newDbName").value.trim();
+            const user = document.getElementById("newDbUser").value.trim();
+            const pass = document.getElementById("newDbPassword").value;
+            const btn = document.getElementById("addDbBtn");
+
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Adding...';
+            btn.disabled = true;
+
+            const expiry = new Date();
+            expiry.setDate(expiry.getDate() + 90);
+
+            const payload = {
+                database_name: `${type} - ${name}`,
+                username: user,
+                password: pass,
+                owner: currentUser ? currentUser.owner : "Database User",
+                expiry_date: expiry.toISOString().split('T')[0]
+            };
+
+            try {
+                const response = await fetch('/api/credentials', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    alert("Database added to SecureDB monitoring successfully!");
+                    document.getElementById("addDbForm").reset();
+                    closeModal("addModal");
+                    addActivity(`Registered new database ${type} - ${name}`, "Just now");
+                    loadUserCredentials();
+                } else {
+                    alert("Failed to add database: " + (data.error || "Unknown error"));
+                }
+            } catch (err) {
+                alert("Error connecting to server.");
+            } finally {
+                btn.innerHTML = '<i class="fa-solid fa-plus"></i> Add Database';
+                btn.disabled = false;
+            }
+        }
+
+        // Password generator
+        function generateNewPassword() {
+            const hasSymbols = document.getElementById("optSymbols")?.checked ?? true;
+            const hasNumbers = document.getElementById("optNumbers")?.checked ?? true;
+            const hasUpper = document.getElementById("optUpper")?.checked ?? true;
+
+            let charset = "abcdefghijklmnopqrstuvwxyz";
+            if (hasUpper) charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            if (hasNumbers) charset += "0123456789";
+            if (hasSymbols) charset += "!@#$%^&*()_+-=";
+
+            let result = "";
+            for (let i = 0; i < 16; i++) {
+                result += charset.charAt(Math.floor(Math.random() * charset.length));
+            }
+            document.getElementById("genOutput").value = result;
+        }
+
+        function copyGenPassword() {
+            const val = document.getElementById("genOutput").value;
+            navigator.clipboard.writeText(val);
+            alert("Generated password copied to clipboard!");
+        }
+
+        function copySecretRef(ref) {
+            navigator.clipboard.writeText(ref);
+            alert("Vault secret URI copied:\n" + ref);
+        }
+
+        function addActivity(title, time) {
+            const list = document.getElementById("activityList");
+            const li = document.createElement("li");
+            li.className = "activity-item";
+            li.innerHTML = `
+                <div class="activity-icon"><i class="fa-solid fa-bolt"></i></div>
+                <div class="activity-text">
+                    <strong>${escapeHtml(title)}</strong>
+                    <span>${time}</span>
+                </div>
+            `;
+            list.insertBefore(li, list.firstChild);
+        }
+
+        function logout() {
+            localStorage.removeItem("securedb_user");
+            window.location.href = "/";
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>

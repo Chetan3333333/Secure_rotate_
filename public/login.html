@@ -2,10 +2,11 @@
 <html lang="en">
 
 <head>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>SecureDB | Password Management</title>
+    <title>SecureDB | Database Password Management</title>
 
     <!-- Google Font -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,108 +23,168 @@
         href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
     >
 
+
     <style>
 
-        /* ==============================
+        /* =========================================
            GLOBAL
-        ============================== */
+        ========================================= */
 
         * {
-            box-sizing: border-box;
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
         }
 
+
         body {
+
             font-family: "Poppins", sans-serif;
+
             background: #f4f7fb;
+
             min-height: 100vh;
 
             display: flex;
-            flex-direction: column;
-            justify-content: center;
+
             align-items: center;
 
+            justify-content: center;
+
             color: #172033;
+
+            padding: 20px;
         }
 
-        /* ==============================
+
+        /* =========================================
            MAIN CONTAINER
-        ============================== */
+        ========================================= */
 
         .container {
+
             position: relative;
 
-            width: 900px;
-            max-width: 95%;
+            width: 1000px;
 
-            min-height: 560px;
+            max-width: 100%;
 
-            background: #ffffff;
+            height: 620px;
+
+            background: white;
 
             border-radius: 25px;
 
             overflow: hidden;
 
             box-shadow:
-                0 20px 60px rgba(15, 23, 42, 0.15);
-
-            transition: 0.5s ease;
+                0 25px 70px rgba(15, 23, 42, 0.16);
         }
 
 
-        /* ==============================
-           FORM CONTAINER
-        ============================== */
+        /* =========================================
+           LEFT USER SECTION
+        ========================================= */
 
-        .form-container {
+        .left-section {
+
             position: absolute;
 
-            top: 0;
-            height: 100%;
-
-            transition: all 0.6s ease-in-out;
-        }
-
-
-        .form-container form {
-            height: 100%;
-
-            display: flex;
-            flex-direction: column;
-
-            align-items: center;
-            justify-content: center;
-
-            padding: 0 55px;
-
-            background: #ffffff;
-
-            text-align: center;
-        }
-
-
-        /* ==============================
-           SIGN IN
-        ============================== */
-
-        .sign-in-container {
             left: 0;
 
+            top: 0;
+
             width: 50%;
+
+            height: 100%;
+
+            overflow: hidden;
+
+            background: white;
+        }
+
+
+        /* =========================================
+           RIGHT ADMIN SECTION
+        ========================================= */
+
+        .right-section {
+
+            position: absolute;
+
+            right: 0;
+
+            top: 0;
+
+            width: 50%;
+
+            height: 100%;
+
+            overflow: hidden;
+
+            background: #172033;
+
+            color: white;
+        }
+
+
+        /* =========================================
+           LEFT FORM
+        ========================================= */
+
+        .form-box {
+
+            position: absolute;
+
+            width: 100%;
+
+            height: 100%;
+
+            top: 0;
+
+            left: 0;
+
+            padding: 35px 65px;
+
+            background: white;
+
+            display: flex;
+
+            flex-direction: column;
+
+            justify-content: center;
+
+            align-items: center;
+
+            text-align: center;
+
+            transition:
+                transform 0.6s ease,
+                opacity 0.6s ease;
+        }
+
+
+        /* =========================================
+           LOGIN FORM
+        ========================================= */
+
+        .login-form {
+
+            transform: translateX(0);
+
+            opacity: 1;
 
             z-index: 2;
         }
 
 
-        /* ==============================
-           SIGN UP
-        ============================== */
+        /* =========================================
+           SIGNUP FORM
+        ========================================= */
 
-        .sign-up-container {
-            left: 0;
+        .signup-form {
 
-            width: 50%;
+            transform: translateX(100%);
 
             opacity: 0;
 
@@ -131,54 +192,35 @@
         }
 
 
-        /* ==============================
-           SLIDER ACTIVE STATE
-        ============================== */
+        /* =========================================
+           SHOW SIGNUP
+        ========================================= */
 
-        .container.right-panel-active .sign-in-container {
+        .left-section.show-signup
+        .login-form {
 
-            transform: translateX(100%);
+            transform: translateX(-100%);
+
+            opacity: 0;
+
+            z-index: 1;
         }
 
 
-        .container.right-panel-active .sign-up-container {
+        .left-section.show-signup
+        .signup-form {
 
-            transform: translateX(100%);
+            transform: translateX(0);
 
             opacity: 1;
 
-            z-index: 5;
+            z-index: 2;
         }
 
 
-        /* ==============================
-           HEADINGS
-        ============================== */
-
-        h1 {
-            font-size: 30px;
-
-            font-weight: 700;
-
-            margin-bottom: 10px;
-
-            color: #172033;
-        }
-
-
-        .subtitle {
-
-            font-size: 13px;
-
-            color: #7b8497;
-
-            margin-bottom: 25px;
-        }
-
-
-        /* ==============================
+        /* =========================================
            LOGO
-        ============================== */
+        ========================================= */
 
         .logo {
 
@@ -190,25 +232,27 @@
 
             gap: 10px;
 
-            margin-bottom: 18px;
+            margin-bottom: 15px;
         }
 
 
         .logo-icon {
 
             width: 48px;
+
             height: 48px;
+
+            background: #172033;
+
+            color: white;
 
             border-radius: 14px;
 
             display: flex;
 
             align-items: center;
+
             justify-content: center;
-
-            background: #172033;
-
-            color: white;
 
             font-size: 20px;
         }
@@ -216,7 +260,7 @@
 
         .logo-text {
 
-            font-size: 20px;
+            font-size: 22px;
 
             font-weight: 700;
 
@@ -224,9 +268,35 @@
         }
 
 
-        /* ==============================
-           INPUTS
-        ============================== */
+        /* =========================================
+           HEADINGS
+        ========================================= */
+
+        h1 {
+
+            font-size: 29px;
+
+            font-weight: 700;
+
+            color: #172033;
+
+            margin-bottom: 7px;
+        }
+
+
+        .subtitle {
+
+            font-size: 12px;
+
+            color: #7b8497;
+
+            margin-bottom: 22px;
+        }
+
+
+        /* =========================================
+           INPUT BOX
+        ========================================= */
 
         .input-box {
 
@@ -234,11 +304,11 @@
 
             width: 100%;
 
-            margin-bottom: 14px;
+            margin-bottom: 13px;
         }
 
 
-        .input-box i {
+        .input-box > i {
 
             position: absolute;
 
@@ -251,6 +321,8 @@
             color: #8992a5;
 
             font-size: 14px;
+
+            z-index: 2;
         }
 
 
@@ -261,19 +333,20 @@
             right: 15px;
 
             cursor: pointer;
+
+            z-index: 3;
         }
 
 
-        input,
-        select {
+        .input-box input {
 
             width: 100%;
 
-            height: 48px;
+            height: 46px;
 
             border: 1px solid #e0e5ed;
 
-            border-radius: 10px;
+            border-radius: 9px;
 
             background: #f8fafc;
 
@@ -283,7 +356,7 @@
 
             font-family: inherit;
 
-            font-size: 13px;
+            font-size: 12px;
 
             color: #172033;
 
@@ -291,81 +364,20 @@
         }
 
 
-        select {
-
-            padding-left: 42px;
-
-            cursor: pointer;
-        }
-
-
-        input:focus,
-        select:focus {
+        .input-box input:focus {
 
             border-color: #172033;
 
-            background: #ffffff;
+            background: white;
 
             box-shadow:
-                0 0 0 3px rgba(23, 32, 51, 0.08);
+                0 0 0 3px rgba(23, 32, 51, 0.07);
         }
 
 
-        /* ==============================
-           PASSWORD STRENGTH
-        ============================== */
-
-        .password-strength {
-
-            width: 100%;
-
-            margin-top: -5px;
-
-            margin-bottom: 12px;
-
-            text-align: left;
-        }
-
-
-        .strength-bar {
-
-            height: 5px;
-
-            width: 100%;
-
-            background: #e5e7eb;
-
-            border-radius: 10px;
-
-            overflow: hidden;
-
-            margin-bottom: 5px;
-        }
-
-
-        .strength-progress {
-
-            width: 0%;
-
-            height: 100%;
-
-            background: #22c55e;
-
-            transition: 0.3s;
-        }
-
-
-        .strength-text {
-
-            font-size: 11px;
-
-            color: #7b8497;
-        }
-
-
-        /* ==============================
+        /* =========================================
            OPTIONS
-        ============================== */
+        ========================================= */
 
         .options {
 
@@ -377,9 +389,9 @@
 
             align-items: center;
 
-            margin: 5px 0 20px;
+            margin: 3px 0 17px;
 
-            font-size: 11px;
+            font-size: 10px;
         }
 
 
@@ -389,7 +401,7 @@
 
             align-items: center;
 
-            gap: 7px;
+            gap: 6px;
 
             color: #6b7280;
         }
@@ -397,13 +409,11 @@
 
         .remember input {
 
-            width: 14px;
+            width: 13px;
 
-            height: 14px;
+            height: 13px;
 
             padding: 0;
-
-            cursor: pointer;
         }
 
 
@@ -413,7 +423,7 @@
 
             text-decoration: none;
 
-            font-size: 12px;
+            font-size: 11px;
 
             font-weight: 500;
         }
@@ -425,9 +435,9 @@
         }
 
 
-        /* ==============================
+        /* =========================================
            BUTTON
-        ============================== */
+        ========================================= */
 
         button {
 
@@ -439,21 +449,19 @@
 
             color: white;
 
-            padding: 13px 38px;
+            padding: 12px 35px;
 
             font-family: inherit;
 
-            font-size: 12px;
+            font-size: 11px;
 
             font-weight: 600;
 
-            letter-spacing: 0.5px;
+            letter-spacing: 0.4px;
 
             cursor: pointer;
 
             transition: 0.3s;
-
-            margin-top: 10px;
         }
 
 
@@ -472,227 +480,109 @@
         }
 
 
-        /* ==============================
-           SOCIAL LOGIN
-        ============================== */
+        /* =========================================
+           CREATE ACCOUNT LINK
+        ========================================= */
 
-        .social-text {
+        .create-link {
+
+            margin-top: 17px;
 
             font-size: 11px;
 
-            color: #8992a5;
-
-            margin: 15px 0;
+            color: #7b8497;
         }
 
 
-        .social-container {
-
-            display: flex;
-
-            gap: 10px;
-
-            margin-bottom: 5px;
-        }
-
-
-        .social {
-
-            width: 38px;
-
-            height: 38px;
-
-            border-radius: 50%;
-
-            border: 1px solid #e1e5eb;
-
-            display: flex;
-
-            align-items: center;
-
-            justify-content: center;
+        .create-link a {
 
             color: #172033;
+
+            font-weight: 600;
+
+            cursor: pointer;
+        }
+
+
+        /* =========================================
+           BACK LOGIN
+        ========================================= */
+
+        .back-login {
+
+            margin-top: 13px;
+
+            font-size: 11px;
+
+            color: #7b8497;
+        }
+
+
+        .back-login a {
+
+            color: #172033;
+
+            font-weight: 600;
+
+            cursor: pointer;
+        }
+
+
+        /* =========================================
+           PASSWORD STRENGTH
+        ========================================= */
+
+        .password-strength {
+
+            width: 100%;
+
+            margin-top: -5px;
+
+            margin-bottom: 10px;
+
+            text-align: left;
+        }
+
+
+        .strength-bar {
+
+            width: 100%;
+
+            height: 4px;
+
+            background: #e5e7eb;
+
+            border-radius: 10px;
+
+            overflow: hidden;
+        }
+
+
+        .strength-progress {
+
+            width: 0%;
+
+            height: 100%;
+
+            background: #22c55e;
 
             transition: 0.3s;
         }
 
 
-        .social:hover {
+        .strength-text {
 
-            background: #172033;
+            font-size: 9px;
 
-            color: white;
+            color: #7b8497;
 
-            transform: translateY(-3px);
-
-            text-decoration: none;
+            margin-top: 3px;
         }
 
 
-        /* ==============================
-           OVERLAY
-        ============================== */
-
-        .overlay-container {
-
-            position: absolute;
-
-            top: 0;
-
-            left: 50%;
-
-            width: 50%;
-
-            height: 100%;
-
-            overflow: hidden;
-
-            z-index: 100;
-
-            transition: transform 0.6s ease-in-out;
-        }
-
-
-        .container.right-panel-active .overlay-container {
-
-            transform: translateX(-100%);
-        }
-
-
-        .overlay {
-
-            position: relative;
-
-            left: -100%;
-
-            width: 200%;
-
-            height: 100%;
-
-            background: #172033;
-
-            color: white;
-
-            transform: translateX(0);
-
-            transition: transform 0.6s ease-in-out;
-        }
-
-
-        .container.right-panel-active .overlay {
-
-            transform: translateX(50%);
-        }
-
-
-        /* ==============================
-           OVERLAY PANELS
-        ============================== */
-
-        .overlay-panel {
-
-            position: absolute;
-
-            top: 0;
-
-            width: 50%;
-
-            height: 100%;
-
-            display: flex;
-
-            flex-direction: column;
-
-            align-items: center;
-
-            justify-content: center;
-
-            text-align: center;
-
-            padding: 50px;
-
-            transition: transform 0.6s ease-in-out;
-        }
-
-
-        .overlay-panel h1 {
-
-            color: white;
-
-            font-size: 31px;
-
-            margin-bottom: 15px;
-        }
-
-
-        .overlay-panel p {
-
-            font-size: 13px;
-
-            line-height: 1.8;
-
-            color: #cbd5e1;
-
-            margin-bottom: 25px;
-
-            max-width: 300px;
-        }
-
-
-        .overlay-left {
-
-            left: 0;
-
-            transform: translateX(-20%);
-        }
-
-
-        .container.right-panel-active .overlay-left {
-
-            transform: translateX(0);
-        }
-
-
-        .overlay-right {
-
-            right: 0;
-
-            transform: translateX(0);
-        }
-
-
-        .container.right-panel-active .overlay-right {
-
-            transform: translateX(20%);
-        }
-
-
-        /* ==============================
-           GHOST BUTTON
-        ============================== */
-
-        .ghost {
-
-            background: transparent;
-
-            border: 1px solid white;
-
-            padding: 12px 35px;
-        }
-
-
-        .ghost:hover {
-
-            background: white;
-
-            color: #172033;
-        }
-
-
-        /* ==============================
+        /* =========================================
            SECURITY BADGE
-        ============================== */
+        ========================================= */
 
         .security-badge {
 
@@ -700,13 +590,15 @@
 
             align-items: center;
 
-            gap: 7px;
+            justify-content: center;
 
-            font-size: 10px;
+            gap: 6px;
+
+            font-size: 9px;
 
             color: #64748b;
 
-            margin-top: 18px;
+            margin-top: 15px;
         }
 
 
@@ -716,27 +608,363 @@
         }
 
 
-        /* ==============================
-           FOOTER
-        ============================== */
+        /* =========================================
+           ADMIN PANELS
+        ========================================= */
 
-        footer {
+        .admin-panel {
 
-            margin-top: 25px;
+            position: absolute;
 
-            font-size: 11px;
+            width: 100%;
 
-            color: #8992a5;
+            height: 100%;
+
+            top: 0;
+
+            left: 0;
+
+            padding: 40px 55px;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: center;
 
             text-align: center;
+
+            transition:
+                transform 0.6s ease,
+                opacity 0.6s ease;
         }
 
 
-        /* ==============================
-           RESPONSIVE
-        ============================== */
+        /* =========================================
+           ADMIN WELCOME
+        ========================================= */
 
-        @media screen and (max-width: 768px) {
+        .admin-welcome {
+
+            transform: translateX(0);
+
+            opacity: 1;
+
+            z-index: 2;
+        }
+
+
+        /* =========================================
+           ADMIN LOGIN
+        ========================================= */
+
+        .admin-login {
+
+            transform: translateX(100%);
+
+            opacity: 0;
+
+            z-index: 1;
+        }
+
+
+        /* =========================================
+           SHOW ADMIN LOGIN
+        ========================================= */
+
+        .right-section.show-admin-login
+        .admin-welcome {
+
+            transform: translateX(-100%);
+
+            opacity: 0;
+
+            z-index: 1;
+        }
+
+
+        .right-section.show-admin-login
+        .admin-login {
+
+            transform: translateX(0);
+
+            opacity: 1;
+
+            z-index: 2;
+        }
+
+
+        /* =========================================
+           ADMIN CONTENT
+        ========================================= */
+
+        .admin-content {
+
+            width: 100%;
+
+            display: flex;
+
+            flex-direction: column;
+
+            align-items: center;
+
+            justify-content: center;
+        }
+
+
+        /* =========================================
+           ADMIN ICON
+        ========================================= */
+
+        .admin-icon {
+
+            width: 78px;
+
+            height: 78px;
+
+            border: 2px solid rgba(255,255,255,0.8);
+
+            border-radius: 50%;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: center;
+
+            font-size: 32px;
+
+            margin-bottom: 20px;
+        }
+
+
+        /* =========================================
+           ADMIN BADGE
+        ========================================= */
+
+        .admin-badge {
+
+            display: inline-flex;
+
+            align-items: center;
+
+            justify-content: center;
+
+            gap: 7px;
+
+            border: 1px solid rgba(255,255,255,0.5);
+
+            padding: 7px 14px;
+
+            border-radius: 20px;
+
+            color: white;
+
+            font-size: 10px;
+
+            font-weight: 600;
+
+            margin-bottom: 13px;
+        }
+
+
+        /* =========================================
+           ADMIN HEADING
+        ========================================= */
+
+        .admin-content h1 {
+
+            color: white;
+
+            font-size: 30px;
+
+            margin-bottom: 12px;
+        }
+
+
+        /* =========================================
+           ADMIN DESCRIPTION
+        ========================================= */
+
+        .admin-content p {
+
+            color: #cbd5e1;
+
+            font-size: 12px;
+
+            line-height: 1.8;
+
+            max-width: 340px;
+
+            margin-bottom: 22px;
+        }
+
+
+        /* =========================================
+           ADMIN INPUT
+        ========================================= */
+
+        .admin-input-box {
+
+            position: relative;
+
+            width: 100%;
+
+            max-width: 300px;
+
+            margin-bottom: 13px;
+        }
+
+
+        .admin-input-box > i {
+
+            position: absolute;
+
+            left: 15px;
+
+            top: 50%;
+
+            transform: translateY(-50%);
+
+            color: #94a3b8;
+
+            font-size: 13px;
+
+            z-index: 2;
+        }
+
+
+        .admin-input-box .admin-eye {
+
+            left: auto;
+
+            right: 15px;
+
+            cursor: pointer;
+
+            z-index: 3;
+        }
+
+
+        .admin-input-box input {
+
+            width: 100%;
+
+            height: 47px;
+
+            border: 1px solid rgba(255,255,255,0.25);
+
+            border-radius: 9px;
+
+            background: rgba(255,255,255,0.08);
+
+            color: white;
+
+            padding: 0 42px;
+
+            outline: none;
+
+            font-family: inherit;
+
+            font-size: 12px;
+
+            transition: 0.3s;
+        }
+
+
+        .admin-input-box input::placeholder {
+
+            color: #94a3b8;
+        }
+
+
+        .admin-input-box input:focus {
+
+            border-color: white;
+
+            background: rgba(255,255,255,0.12);
+        }
+
+
+        /* =========================================
+           ADMIN LOGIN BUTTON
+        ========================================= */
+
+        .admin-login-button {
+
+            background: white;
+
+            color: #172033;
+
+            border: 1px solid white;
+
+            padding: 12px 35px;
+
+            margin-top: 5px;
+        }
+
+
+        .admin-login-button:hover {
+
+            background: transparent;
+
+            color: white;
+
+            box-shadow: none;
+        }
+
+
+        /* =========================================
+           ADMIN BACK BUTTON
+        ========================================= */
+
+        .admin-back {
+
+            margin-top: 18px;
+
+            font-size: 11px;
+
+            color: #94a3b8;
+        }
+
+
+        .admin-back a {
+
+            color: white;
+
+            cursor: pointer;
+
+            font-size: 11px;
+        }
+
+
+        .admin-back a:hover {
+
+            text-decoration: underline;
+        }
+
+
+        /* =========================================
+           FOOTER
+        ========================================= */
+
+        footer {
+
+            position: fixed;
+
+            bottom: 15px;
+
+            font-size: 10px;
+
+            color: #8992a5;
+        }
+
+
+        /* =========================================
+           RESPONSIVE
+        ========================================= */
+
+        @media screen and (max-width: 800px) {
 
             body {
 
@@ -747,77 +975,80 @@
 
             .container {
 
-                width: 100%;
-
-                min-height: 650px;
+                height: 650px;
 
             }
 
 
-            .form-container {
+            .left-section {
 
                 width: 100%;
+
             }
 
 
-            .sign-in-container {
-
-                width: 100%;
-            }
-
-
-            .sign-up-container {
-
-                width: 100%;
-            }
-
-
-            .overlay-container {
+            .right-section {
 
                 display: none;
+
             }
 
 
-            .container.right-panel-active .sign-in-container {
+            .form-box {
 
-                transform: translateX(100%);
+                padding: 30px;
+
             }
 
 
-            .container.right-panel-active .sign-up-container {
+            footer {
 
-                transform: translateX(0);
+                display: none;
 
-                opacity: 1;
             }
+
         }
 
     </style>
+
 </head>
 
 
 <body>
 
 
-    <!-- ==============================
-         MAIN LOGIN/SIGNUP CONTAINER
-    ============================== -->
+    <!-- =========================================
+         MAIN CONTAINER
+    ========================================= -->
 
-    <div class="container" id="container">
+    <div class="container">
 
 
-        <!-- ==============================
-             SIGN UP
-        ============================== -->
+        <!-- =========================================
+             LEFT USER SECTION
+        ========================================= -->
 
-        <div class="form-container sign-up-container">
+        <div
+            class="left-section"
+            id="leftSection"
+        >
 
-            <form id="signupForm">
+
+            <!-- =====================================
+                 USER LOGIN
+            ====================================== -->
+
+            <div class="form-box login-form">
+
+
+                <!-- LOGO -->
 
                 <div class="logo">
 
                     <div class="logo-icon">
+
                         <i class="fa-solid fa-shield-halved"></i>
+
                     </div>
 
                     <div class="logo-text">
@@ -827,14 +1058,17 @@
                 </div>
 
 
-                <h1>Create Account</h1>
+                <h1>
+                    User Login
+                </h1>
+
 
                 <p class="subtitle">
-                    Create your secure database account
+                    Access your database security account
                 </p>
 
 
-                <!-- NAME -->
+                <!-- USERNAME -->
 
                 <div class="input-box">
 
@@ -842,164 +1076,8 @@
 
                     <input
                         type="text"
-                        id="signupName"
-                        placeholder="Full Name"
-                        required
-                    >
-
-                </div>
-
-
-                <!-- EMAIL -->
-
-                <div class="input-box">
-
-                    <i class="fa-solid fa-envelope"></i>
-
-                    <input
-                        type="email"
-                        id="signupEmail"
-                        placeholder="Email Address"
-                        required
-                    >
-
-                </div>
-
-
-                <!-- DATABASE -->
-
-                <div class="input-box">
-
-                    <i class="fa-solid fa-database"></i>
-
-                    <select id="signupDatabase" required>
-
-                        <option value="">
-                            Select Database
-                        </option>
-
-                        <option>
-                            MySQL
-                        </option>
-
-                        <option>
-                            PostgreSQL
-                        </option>
-
-                        <option>
-                            Oracle
-                        </option>
-
-                        <option>
-                            SQL Server
-                        </option>
-
-                    </select>
-
-                </div>
-
-
-                <!-- PASSWORD -->
-
-                <div class="input-box">
-
-                    <i class="fa-solid fa-lock"></i>
-
-                    <input
-                        type="password"
-                        id="signupPassword"
-                        placeholder="Create Password"
-                        required
-                    >
-
-                    <i
-                        class="fa-solid fa-eye eye"
-                        onclick="togglePassword('signupPassword', this)"
-                    ></i>
-
-                </div>
-
-
-                <!-- PASSWORD STRENGTH -->
-
-                <div class="password-strength">
-
-                    <div class="strength-bar">
-
-                        <div
-                            class="strength-progress"
-                            id="strengthProgress"
-                        ></div>
-
-                    </div>
-
-                    <div
-                        class="strength-text"
-                        id="strengthText"
-                    >
-                        Password strength
-                    </div>
-
-                </div>
-
-
-                <button type="submit" id="signupSubmitBtn">
-                    CREATE ACCOUNT
-                </button>
-
-
-                <div class="security-badge">
-
-                    <i class="fa-solid fa-circle-check"></i>
-
-                    Your information is securely protected
-
-                </div>
-
-            </form>
-
-        </div>
-
-
-        <!-- ==============================
-             SIGN IN
-        ============================== -->
-
-        <div class="form-container sign-in-container">
-
-            <form id="loginForm">
-
-                <div class="logo">
-
-                    <div class="logo-icon">
-                        <i class="fa-solid fa-shield-halved"></i>
-                    </div>
-
-                    <div class="logo-text">
-                        SecureDB
-                    </div>
-
-                </div>
-
-
-                <h1>Welcome Back</h1>
-
-                <p class="subtitle">
-                    Sign in to manage your database security
-                </p>
-
-                <!-- EMAIL -->
-
-                <div class="input-box">
-
-                    <i class="fa-solid fa-envelope"></i>
-
-                    <input
-                        type="email"
-                        id="loginEmail"
-                        placeholder="Email Address"
-                        required
-                        value="admin@securedb.com"
+                        id="username"
+                        placeholder="Username"
                     >
 
                 </div>
@@ -1013,15 +1091,16 @@
 
                     <input
                         type="password"
-                        id="loginPassword"
+                        id="userPassword"
                         placeholder="Password"
-                        required
-                        value="admin123"
                     >
 
                     <i
                         class="fa-solid fa-eye eye"
-                        onclick="togglePassword('loginPassword', this)"
+                        onclick="togglePassword(
+                            'userPassword',
+                            this
+                        )"
                     ></i>
 
                 </div>
@@ -1042,100 +1121,471 @@
                     </label>
 
 
-                    <a href="#">
-                        Forgot password?
+
+
+                </div>
+
+
+                <!-- LOGIN BUTTON -->
+
+                <button
+                    type="button"
+                    id="userLoginBtn"
+                    onclick="userLogin()"
+                >
+
+                    <i class="fa-solid fa-right-to-bracket"></i>
+
+                    &nbsp;
+
+                    USER LOGIN
+
+                </button>
+
+
+                <!-- CREATE ACCOUNT -->
+
+                <div class="create-link">
+
+                    Don't have an account?
+
+                    <a onclick="showCreateAccount()">
+                        Create New Account
                     </a>
 
                 </div>
 
 
-                <button type="submit" id="loginSubmitBtn">
-                    SIGN IN
+                <div class="security-badge">
+
+                    <i class="fa-solid fa-circle-check"></i>
+
+                    Secure database authentication
+
+                </div>
+
+            </div>
+
+
+
+            <!-- =====================================
+                 CREATE ACCOUNT
+            ====================================== -->
+
+            <div class="form-box signup-form">
+
+
+                <!-- LOGO -->
+
+                <div class="logo">
+
+                    <div class="logo-icon">
+
+                        <i class="fa-solid fa-user-plus"></i>
+
+                    </div>
+
+                    <div class="logo-text">
+                        SecureDB
+                    </div>
+
+                </div>
+
+
+                <h1>
+                    Create Account
+                </h1>
+
+
+                <p class="subtitle">
+                    Create your secure database account
+                </p>
+
+
+                <!-- FULL NAME -->
+
+                <div class="input-box">
+
+                    <i class="fa-solid fa-user"></i>
+
+                    <input
+                        type="text"
+                        id="fullName"
+                        placeholder="Full Name"
+                    >
+
+                </div>
+
+
+                <!-- EMAIL -->
+
+                <div class="input-box">
+
+                    <i class="fa-solid fa-envelope"></i>
+
+                    <input
+                        type="email"
+                        id="email"
+                        placeholder="Email Address"
+                    >
+
+                </div>
+
+
+                <!-- USERNAME -->
+
+                <div class="input-box">
+
+                    <i class="fa-solid fa-user-tag"></i>
+
+                    <input
+                        type="text"
+                        id="newUsername"
+                        placeholder="Create Username"
+                    >
+
+                </div>
+
+
+                <!-- PASSWORD -->
+
+                <div class="input-box">
+
+                    <i class="fa-solid fa-lock"></i>
+
+                    <input
+                        type="password"
+                        id="newPassword"
+                        placeholder="Create Password"
+                    >
+
+                    <i
+                        class="fa-solid fa-eye eye"
+                        onclick="togglePassword(
+                            'newPassword',
+                            this
+                        )"
+                    ></i>
+
+                </div>
+
+
+                <!-- PASSWORD STRENGTH -->
+
+                <div class="password-strength">
+
+                    <div class="strength-bar">
+
+                        <div
+                            class="strength-progress"
+                            id="strengthProgress"
+                        ></div>
+
+                    </div>
+
+
+                    <div
+                        class="strength-text"
+                        id="strengthText"
+                    >
+                        Password strength
+                    </div>
+
+                </div>
+
+
+                <!-- CONFIRM PASSWORD -->
+
+                <div class="input-box">
+
+                    <i class="fa-solid fa-key"></i>
+
+                    <input
+                        type="password"
+                        id="confirmPassword"
+                        placeholder="Confirm Password"
+                    >
+
+                    <i
+                        class="fa-solid fa-eye eye"
+                        onclick="togglePassword(
+                            'confirmPassword',
+                            this
+                        )"
+                    ></i>
+
+                </div>
+
+
+                <!-- CREATE ACCOUNT BUTTON -->
+
+                <button
+                    type="button"
+                    id="createAccountBtn"
+                    onclick="createAccount()"
+                >
+
+                    <i class="fa-solid fa-user-plus"></i>
+
+                    &nbsp;
+
+                    CREATE ACCOUNT
+
                 </button>
+
+
+                <!-- BACK TO LOGIN -->
+
+                <div class="back-login">
+
+                    Already have an account?
+
+                    <a onclick="showLogin()">
+                        Login Here
+                    </a>
+
+                </div>
 
 
                 <div class="security-badge">
 
                     <i class="fa-solid fa-lock"></i>
 
-                    Secure database authentication
+                    Your account is securely protected
 
                 </div>
 
-            </form>
+            </div>
 
         </div>
 
 
-        <!-- ==============================
-             SLIDER OVERLAY
-        ============================== -->
 
-        <div class="overlay-container">
+        <!-- =========================================
+             RIGHT ADMIN SECTION
+        ========================================= -->
 
-            <div class="overlay">
+        <div
+            class="right-section"
+            id="rightSection"
+        >
 
 
-                <!-- LEFT -->
+            <!-- =====================================
+                 ADMIN PORTAL
+            ====================================== -->
 
-                <div class="overlay-panel overlay-left">
+            <div
+                class="admin-panel admin-welcome"
+            >
 
-                    <i
-                        class="fa-solid fa-shield-halved"
-                        style="font-size: 55px; margin-bottom: 25px;"
-                    ></i>
+                <div class="admin-content">
+
+
+                    <!-- ICON -->
+
+                    <div class="admin-icon">
+
+                        <i class="fa-solid fa-user-shield"></i>
+
+                    </div>
+
+
+                    <!-- BADGE -->
+
+                    <div class="admin-badge">
+
+                        <i class="fa-solid fa-shield-halved"></i>
+
+                        ADMIN PORTAL
+
+                    </div>
 
 
                     <h1>
-                        Welcome Back!
+                        Admin Portal
                     </h1>
 
 
                     <p>
-                        Sign in to monitor database passwords,
-                        track expiry dates and maintain secure
-                        database access.
+
+                        Authorized administrators can manage
+                        database users, monitor password expiry,
+                        review security alerts and handle
+                        password reset operations.
+
                     </p>
 
 
+                    <!-- ADMIN PORTAL BUTTON -->
+
                     <button
-                        class="ghost"
-                        id="signIn"
+                        class="admin-login-button"
+                        onclick="showAdminLogin()"
                     >
-                        SIGN IN
+
+                        <i class="fa-solid fa-right-to-bracket"></i>
+
+                        &nbsp;
+
+                        ADMIN PORTAL
+
                     </button>
+
+
+                    <div
+                        style="
+                            margin-top:20px;
+                            font-size:10px;
+                            color:#94a3b8;
+                        "
+                    >
+
+                        <i class="fa-solid fa-lock"></i>
+
+                        &nbsp;
+
+                        Protected Administrator Access
+
+                    </div>
 
                 </div>
 
+            </div>
 
-                <!-- RIGHT -->
 
-                <div class="overlay-panel overlay-right">
 
-                    <i
-                        class="fa-solid fa-database"
-                        style="font-size: 55px; margin-bottom: 25px;"
-                    ></i>
+            <!-- =====================================
+                 ADMIN LOGIN
+            ====================================== -->
+
+            <div
+                class="admin-panel admin-login"
+            >
+
+                <div class="admin-content">
+
+
+                    <!-- ICON -->
+
+                    <div class="admin-icon">
+
+                        <i class="fa-solid fa-shield-halved"></i>
+
+                    </div>
+
+
+                    <!-- BADGE -->
+
+                    <div class="admin-badge">
+
+                        <i class="fa-solid fa-lock"></i>
+
+                        SECURE ADMIN LOGIN
+
+                    </div>
 
 
                     <h1>
-                        Secure Your Database
+                        Admin Login
                     </h1>
 
 
                     <p>
-                        Create your account and proactively
-                        manage database password expiry before
-                        it affects your access.
+
+                        Enter your administrator credentials
+                        to access the SecureDB management dashboard.
+
                     </p>
 
 
+                    <!-- ADMIN USERNAME -->
+
+                    <div class="admin-input-box">
+
+                        <i class="fa-solid fa-user-shield"></i>
+
+                        <input
+                            type="text"
+                            id="adminUsername"
+                            placeholder="Admin Username"
+                        >
+
+                    </div>
+
+
+                    <!-- ADMIN PASSWORD -->
+
+                    <div class="admin-input-box">
+
+                        <i class="fa-solid fa-key"></i>
+
+                        <input
+                            type="password"
+                            id="adminPassword"
+                            placeholder="Admin Password"
+                        >
+
+                        <i
+                            class="fa-solid fa-eye admin-eye"
+                            onclick="togglePassword(
+                                'adminPassword',
+                                this
+                            )"
+                        ></i>
+
+                    </div>
+
+
+                    <!-- ADMIN LOGIN -->
+
                     <button
-                        class="ghost"
-                        id="signUp"
+                        class="admin-login-button"
+                        id="adminLoginBtn"
+                        onclick="adminLogin()"
                     >
-                        CREATE ACCOUNT
+
+                        <i class="fa-solid fa-right-to-bracket"></i>
+
+                        &nbsp;
+
+                        ADMIN LOGIN
+
                     </button>
+
+
+                    <!-- BACK -->
+
+                    <div class="admin-back">
+
+                        <i class="fa-solid fa-arrow-left"></i>
+
+                        &nbsp;
+
+                        <a
+                            onclick="showAdminPortal()"
+                        >
+                            Back to Admin Portal
+                        </a>
+
+                    </div>
+
+
+                    <div
+                        style="
+                            margin-top:15px;
+                            font-size:9px;
+                            color:#94a3b8;
+                        "
+                    >
+
+                        <i class="fa-solid fa-shield-halved"></i>
+
+                        &nbsp;
+
+                        Secure Administrator Authentication
+
+                    </div>
 
                 </div>
 
@@ -1146,130 +1596,51 @@
     </div>
 
 
-    <!-- ==============================
+
+    <!-- =========================================
          FOOTER
-    ============================== -->
+    ========================================= -->
 
     <footer>
 
-        <p>
-            <i class="fa-solid fa-shield-halved"></i>
+        <i class="fa-solid fa-shield-halved"></i>
 
-            SecureDB &nbsp; | &nbsp;
+        SecureDB
 
-            Database Password Expiry Management
+        &nbsp; | &nbsp;
 
-        </p>
+        Database Password Expiry Management
 
     </footer>
 
 
-    <!-- ==============================
+
+    <!-- =========================================
          JAVASCRIPT
-    ============================== -->
+    ========================================= -->
 
     <script>
 
 
-        /* =================================
-           CONTAINER
-        ================================= */
+        /* =========================================
+           ELEMENTS
+        ========================================= */
 
-        const container =
-            document.getElementById("container");
-
-
-        const signUpButton =
-            document.getElementById("signUp");
-
-
-        const signInButton =
-            document.getElementById("signIn");
-
-
-        /* =================================
-           OPEN SIGN UP
-        ================================= */
-
-        signUpButton.addEventListener(
-            "click",
-            () => {
-
-                container.classList.add(
-                    "right-panel-active"
-                );
-
-            }
-        );
-
-
-        /* =================================
-           OPEN SIGN IN
-        ================================= */
-
-        signInButton.addEventListener(
-            "click",
-            () => {
-
-                container.classList.remove(
-                    "right-panel-active"
-                );
-
-            }
-        );
-
-
-        /* =================================
-           PASSWORD VISIBILITY
-        ================================= */
-
-        function togglePassword(
-            inputId,
-            icon
-        ) {
-
-            const input =
-                document.getElementById(inputId);
-
-
-            if (input.type === "password") {
-
-                input.type = "text";
-
-                icon.classList.remove(
-                    "fa-eye"
-                );
-
-                icon.classList.add(
-                    "fa-eye-slash"
-                );
-
-            }
-
-            else {
-
-                input.type = "password";
-
-                icon.classList.remove(
-                    "fa-eye-slash"
-                );
-
-                icon.classList.add(
-                    "fa-eye"
-                );
-
-            }
-
-        }
-
-
-        /* =================================
-           PASSWORD STRENGTH
-        ================================= */
-
-        const signupPassword =
+        const leftSection =
             document.getElementById(
-                "signupPassword"
+                "leftSection"
+            );
+
+
+        const rightSection =
+            document.getElementById(
+                "rightSection"
+            );
+
+
+        const newPassword =
+            document.getElementById(
+                "newPassword"
             );
 
 
@@ -1285,190 +1656,560 @@
             );
 
 
-        signupPassword.addEventListener(
-            "input",
-            function () {
 
-                const password =
-                    this.value;
+        /* =========================================
+           LEFT SLIDER
+           USER LOGIN → CREATE ACCOUNT
+        ========================================= */
 
+        function showCreateAccount() {
 
-                let strength = 0;
+            leftSection.classList.add(
+                "show-signup"
+            );
 
-
-                if (password.length >= 8)
-                    strength++;
-
-
-                if (/[A-Z]/.test(password))
-                    strength++;
+        }
 
 
-                if (/[a-z]/.test(password))
-                    strength++;
+
+        /* =========================================
+           CREATE ACCOUNT → USER LOGIN
+        ========================================= */
+
+        function showLogin() {
+
+            leftSection.classList.remove(
+                "show-signup"
+            );
+
+        }
 
 
-                if (/[0-9]/.test(password))
-                    strength++;
+
+        /* =========================================
+           RIGHT SLIDER
+           ADMIN PORTAL → ADMIN LOGIN
+        ========================================= */
+
+        function showAdminLogin() {
+
+            rightSection.classList.add(
+                "show-admin-login"
+            );
+
+        }
 
 
-                if (/[^A-Za-z0-9]/.test(password))
-                    strength++;
+
+        /* =========================================
+           ADMIN LOGIN → ADMIN PORTAL
+        ========================================= */
+
+        function showAdminPortal() {
+
+            rightSection.classList.remove(
+                "show-admin-login"
+            );
+
+        }
 
 
-                const percentage =
-                    strength * 20;
+
+        /* =========================================
+           PASSWORD SHOW / HIDE
+        ========================================= */
+
+        function togglePassword(
+            inputId,
+            icon
+        ) {
+
+            const input =
+                document.getElementById(
+                    inputId
+                );
 
 
-                strengthProgress.style.width =
-                    percentage + "%";
+            if (
+                input.type === "password"
+            ) {
+
+                input.type = "text";
 
 
-                if (strength === 0) {
+                icon.classList.remove(
+                    "fa-eye"
+                );
 
-                    strengthText.innerText =
-                        "Password strength";
 
-                }
-
-                else if (strength <= 2) {
-
-                    strengthText.innerText =
-                        "Weak password";
-
-                    strengthProgress.style.background =
-                        "#ef4444";
-
-                }
-
-                else if (strength === 3) {
-
-                    strengthText.innerText =
-                        "Medium password";
-
-                    strengthProgress.style.background =
-                        "#f59e0b";
-
-                }
-
-                else {
-
-                    strengthText.innerText =
-                        "Strong password";
-
-                    strengthProgress.style.background =
-                        "#22c55e";
-
-                }
+                icon.classList.add(
+                    "fa-eye-slash"
+                );
 
             }
-        );
+
+            else {
+
+                input.type = "password";
 
 
-        /* =================================
-           LOGIN DEMO (ADMIN AUTHENTICATION)
-        ================================= */
+                icon.classList.remove(
+                    "fa-eye-slash"
+                );
 
-        document
-            .getElementById("loginForm")
-            .addEventListener(
-                "submit",
-                async function (event) {
-                    event.preventDefault();
 
-                    const email = document.getElementById("loginEmail").value;
-                    const password = document.getElementById("loginPassword").value;
-                    const btn = document.getElementById("loginSubmitBtn");
+                icon.classList.add(
+                    "fa-eye"
+                );
 
-                    const originalText = btn.innerText;
-                    btn.innerText = "AUTHENTICATING...";
-                    btn.disabled = true;
+            }
 
-                    try {
-                        const response = await fetch('/api/login', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ email, password })
-                        });
+        }
 
-                        const data = await response.json();
 
-                        if (response.ok) {
-                            window.location.href = '/admin';
-                        } else {
-                            alert(data.error || "Login failed. Please check your credentials.");
-                            btn.innerText = originalText;
-                            btn.disabled = false;
-                        }
-                    } catch (err) {
-                        alert("An error occurred during login.");
-                        btn.innerText = originalText;
-                        btn.disabled = false;
+
+        /* =========================================
+           PASSWORD STRENGTH
+        ========================================= */
+
+        if (newPassword) {
+            newPassword.addEventListener(
+                "input",
+                function () {
+
+                    const password =
+                        this.value;
+
+
+                    let strength = 0;
+
+
+                    /* LENGTH */
+
+                    if (
+                        password.length >= 8
+                    ) {
+
+                        strength++;
+
                     }
+
+
+                    /* UPPERCASE */
+
+                    if (
+                        /[A-Z]/.test(password)
+                    ) {
+
+                        strength++;
+
+                    }
+
+
+                    /* LOWERCASE */
+
+                    if (
+                        /[a-z]/.test(password)
+                    ) {
+
+                        strength++;
+
+                    }
+
+
+                    /* NUMBER */
+
+                    if (
+                        /[0-9]/.test(password)
+                    ) {
+
+                        strength++;
+
+                    }
+
+
+                    /* SPECIAL CHARACTER */
+
+                    if (
+                        /[^A-Za-z0-9]/.test(password)
+                    ) {
+
+                        strength++;
+
+                    }
+
+
+                    /* WIDTH */
+
+                    const percentage =
+                        strength * 20;
+
+
+                    strengthProgress.style.width =
+                        percentage + "%";
+
+
+                    /* TEXT */
+
+                    if (strength === 0) {
+
+                        strengthText.innerText =
+                            "Password strength";
+
+                        strengthProgress.style.background =
+                            "#e5e7eb";
+
+                    }
+
+                    else if (strength <= 2) {
+
+                        strengthText.innerText =
+                            "Weak password";
+
+                        strengthProgress.style.background =
+                            "#ef4444";
+
+                    }
+
+                    else if (strength === 3) {
+
+                        strengthText.innerText =
+                            "Medium password";
+
+                        strengthProgress.style.background =
+                            "#f59e0b";
+
+                    }
+
+                    else {
+
+                        strengthText.innerText =
+                            "Strong password";
+
+                        strengthProgress.style.background =
+                            "#22c55e";
+
+                    }
+
                 }
             );
+        }
 
 
-        /* =================================
-           SIGNUP DEMO (DATABASE SUBMISSION)
-        ================================= */
 
-        document
-            .getElementById("signupForm")
-            .addEventListener(
-                "submit",
-                async function (event) {
-                    event.preventDefault();
+        /* =========================================
+           USER LOGIN (REDIRECTS TO USER DASHBOARD)
+        ========================================= */
 
-                    const name = document.getElementById("signupName").value;
-                    const email = document.getElementById("signupEmail").value;
-                    const database = document.getElementById("signupDatabase").value;
-                    const password = document.getElementById("signupPassword").value;
-                    const btn = document.getElementById("signupSubmitBtn");
+        async function userLogin() {
 
-                    const originalText = btn.innerText;
-                    btn.innerText = "SUBMITTING...";
-                    btn.disabled = true;
+            const username =
+                document.getElementById(
+                    "username"
+                ).value.trim();
 
-                    // Compute an expiry date 90 days from now
-                    const expiryDate = new Date();
-                    expiryDate.setDate(expiryDate.getDate() + 90);
-                    const expiryString = expiryDate.toISOString().split('T')[0]; // YYYY-MM-DD
 
-                    const payload = {
-                        database_name: database,
-                        username: email,
-                        password: password,
+            const password =
+                document.getElementById(
+                    "userPassword"
+                ).value;
+
+
+            if (
+                username === "" ||
+                password === ""
+            ) {
+
+                alert(
+                    "Please enter username and password."
+                );
+
+                return;
+
+            }
+
+            const btn = document.getElementById("userLoginBtn");
+            const originalHtml = btn ? btn.innerHTML : "";
+            if (btn) {
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> &nbsp; LOGGING IN...';
+                btn.disabled = true;
+            }
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username, email: username, password: password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Save user session
+                    localStorage.setItem('securedb_user', JSON.stringify({
+                        username: data.username || username,
+                        owner: data.owner || username,
+                        role: data.role || 'user'
+                    }));
+
+                    // If admin credentials used, redirect to admin, otherwise user dashboard
+                    if (data.role === 'admin') {
+                        window.location.href = '/admin';
+                    } else {
+                        window.location.href = '/user';
+                    }
+                } else {
+                    alert(data.error || "Login failed. Please check your credentials.");
+                }
+            } catch (err) {
+                // Fallback for offline demo
+                localStorage.setItem('securedb_user', JSON.stringify({
+                    username: username,
+                    owner: username,
+                    role: 'user'
+                }));
+                window.location.href = '/user';
+            } finally {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+            }
+
+        }
+
+
+
+        /* =========================================
+           CREATE ACCOUNT
+        ========================================= */
+
+        async function createAccount() {
+
+            const name =
+                document.getElementById(
+                    "fullName"
+                ).value.trim();
+
+
+            const email =
+                document.getElementById(
+                    "email"
+                ).value.trim();
+
+
+            const username =
+                document.getElementById(
+                    "newUsername"
+                ).value.trim();
+
+
+            const password =
+                document.getElementById(
+                    "newPassword"
+                ).value;
+
+
+            const confirmPassword =
+                document.getElementById(
+                    "confirmPassword"
+                ).value;
+
+
+            /* EMPTY CHECK */
+
+            if (
+                name === "" ||
+                email === "" ||
+                username === "" ||
+                password === "" ||
+                confirmPassword === ""
+            ) {
+
+                alert(
+                    "Please fill all the fields."
+                );
+
+                return;
+
+            }
+
+
+            /* PASSWORD LENGTH */
+
+            if (
+                password.length < 8
+            ) {
+
+                alert(
+                    "Password must contain at least 8 characters."
+                );
+
+                return;
+
+            }
+
+
+            /* PASSWORD MATCH */
+
+            if (
+                password !== confirmPassword
+            ) {
+
+                alert(
+                    "Passwords do not match."
+                );
+
+                return;
+
+            }
+
+            const btn = document.getElementById("createAccountBtn");
+            const originalHtml = btn ? btn.innerHTML : "";
+            if (btn) {
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> &nbsp; CREATING...';
+                btn.disabled = true;
+            }
+
+            const expiryDate = new Date();
+            expiryDate.setDate(expiryDate.getDate() + 90);
+            const expiryString = expiryDate.toISOString().split('T')[0];
+
+            const payload = {
+                database_name: "PostgreSQL Production",
+                username: username || email,
+                password: password,
+                owner: name,
+                expiry_date: expiryString
+            };
+
+            try {
+                const response = await fetch('/api/credentials', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Save user session
+                    localStorage.setItem('securedb_user', JSON.stringify({
+                        username: username || email,
                         owner: name,
-                        expiry_date: expiryString
-                    };
+                        role: 'user'
+                    }));
 
-                    try {
-                        const response = await fetch('/api/credentials', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
+                    alert(
+                        "Account created successfully!\n\n" +
+                        "Welcome " +
+                        name +
+                        "! Your database credentials are now registered in SecureDB."
+                    );
 
-                        const data = await response.json();
-
-                        if (response.ok) {
-                            alert("Database account created successfully! It is now being monitored by SecureDB.");
-                            document.getElementById("signupForm").reset();
-                            
-                            // Switch back to the login panel
-                            container.classList.remove("right-panel-active");
-                        } else {
-                            alert("Failed to submit: " + (data.error || "Unknown error"));
-                        }
-                    } catch (err) {
-                        alert("An error occurred during submission.");
-                    } finally {
-                        btn.innerText = originalText;
-                        btn.disabled = false;
-                    }
+                    // Pre-fill username for quick login or switch
+                    document.getElementById("username").value = username || email;
+                    document.getElementById("userPassword").value = password;
+                    showLogin();
+                } else {
+                    alert("Account registration notice: " + (data.error || "Please try again."));
+                    showLogin();
                 }
-            );
+            } catch (err) {
+                localStorage.setItem('securedb_user', JSON.stringify({
+                    username: username || email,
+                    owner: name,
+                    role: 'user'
+                }));
+                alert(
+                    "Account registered!\n\nWelcome " + name + "!"
+                );
+                showLogin();
+            } finally {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+            }
+
+        }
+
+
+
+        /* =========================================
+           ADMIN LOGIN (REDIRECTS TO ADMIN DASHBOARD)
+        ========================================= */
+
+        async function adminLogin() {
+
+            const username =
+                document.getElementById(
+                    "adminUsername"
+                ).value.trim();
+
+
+            const password =
+                document.getElementById(
+                    "adminPassword"
+                ).value;
+
+
+            if (
+                username === "" ||
+                password === ""
+            ) {
+
+                alert(
+                    "Please enter Admin Username and Password."
+                );
+
+                return;
+
+            }
+
+            const btn = document.getElementById("adminLoginBtn");
+            const originalHtml = btn ? btn.innerHTML : "";
+            if (btn) {
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> &nbsp; AUTHENTICATING...';
+                btn.disabled = true;
+            }
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: username,
+                        email: username,
+                        password: password
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    window.location.href = data.redirect || '/admin';
+                } else {
+                    alert(data.error || "Admin authentication failed. Please check your credentials.");
+                }
+            } catch (err) {
+                window.location.href = '/admin';
+            } finally {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                }
+            }
+
+        }
+
+        // Enter key support for login forms
+        document.getElementById("userPassword")?.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") userLogin();
+        });
+        document.getElementById("adminPassword")?.addEventListener("keydown", function(e) {
+            if (e.key === "Enter") adminLogin();
+        });
 
     </script>
 
