@@ -364,9 +364,17 @@
     </div>
 
     <script>
+
+        // Resolve token from /reset/<token> path OR ?token= query
+        (function() {
+          const params = new URLSearchParams(window.location.search);
+          window.__SR_TOKEN = params.get("token") || (window.location.pathname.split("/").filter(Boolean).pop() || "");
+          if (window.__SR_TOKEN === "reset.html") window.__SR_TOKEN = params.get("token") || "";
+        })();
+
       (function () {
         const pathParts = window.location.pathname.split("/");
-        const token = pathParts[pathParts.length - 1];
+        const token = window.__SR_TOKEN || pathParts[pathParts.length - 1];
 
         const loadingView = document.getElementById("loadingView");
         const errorView = document.getElementById("errorView");

@@ -5,7 +5,6 @@ const state = {
   recommendations: [],
   audit: [],
   analytics: null,
-  analyticsPlots: null,
   filters: {
     search: "",
     risk: "All",
@@ -49,8 +48,13 @@ function queryString() {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
+    credentials: "include",
     ...options,
   });
+  if (response.status === 401) {
+    window.location.href = "/";
+    throw new Error("Unauthorized");
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
@@ -62,14 +66,13 @@ async function refreshAll() {
   isRefreshing = true;
   try {
     const qs = queryString();
-    const [summary, credentials, recommendations, notifications, audit, analytics, analyticsPlotsRaw] = await Promise.all([
+    const [summary, credentials, recommendations, notifications, audit, analytics] = await Promise.all([
       api(`/api/summary?${qs}`),
       api(`/api/credentials?${qs}`),
       api(`/api/recommendations?${qs}`),
       api("/api/notifications"),
       api("/api/audit"),
       api(`/api/analytics?${qs}`),
-      api(`/api/analytics/plots`).catch(() => null),
     ]);
     state.summary = summary;
     state.credentials = credentials;
@@ -77,7 +80,6 @@ async function refreshAll() {
     state.notifications = notifications;
     state.audit = audit;
     state.analytics = analytics;
-    state.analyticsPlots = typeof analyticsPlotsRaw === 'string' ? JSON.parse(analyticsPlotsRaw) : analyticsPlotsRaw;
     if (!state.selectedId && credentials.length) state.selectedId = credentials[0].id;
     if (!credentials.some((item) => item.id === state.selectedId) && credentials.length) {
       state.selectedId = credentials[0].id;
@@ -93,12 +95,30 @@ function selectedCredential() {
 }
 
 function riskPill(risk) {
-  return `<span class="pill risk-${escapeHtml(risk)}">${escapeHtml(risk)}</span>`;
+  const label = risk || "Low";
+  return `<span class="pill risk-${escapeHtml(label)}">${escapeHtml(label)}</span>`;
 }
 
+
+function safeRecommendation(item) {
+  const rec = (item && item.recommendation && typeof item.recommendation === "object")
+    ? item.recommendation
+    : {};
+  const action = rec.action || (item && item.action) || "No recommendation available";
+  const explanation = rec.explanation || (item && item.explanation) || "";
+  const stakeholders = Array.isArray(rec.stakeholders)
+    ? rec.stakeholders
+    : (Array.isArray(item && item.stakeholders) ? item.stakeholders : []);
+  const urgency = rec.urgency || (item && item.urgency) || "Low";
+  return { action, explanation, stakeholders, urgency };
+}
+
+
 function render() {
+  const summary = state.summary || {};
+  const riskDist = summary.risk_distribution || {};
   renderMetrics();
-  renderBars("#riskBars", Object.entries(state.summary.risk_distribution).map(([label, value]) => ({ label, value })));
+  renderBars("#riskBars", Object.entries(riskDist).map(([label, value]) => ({ label, value })));
   renderExpiryList();
   renderCredentialRows();
   renderExplorerRows();
@@ -107,15 +127,17 @@ function render() {
   renderNotifications();
   renderAudit();
   renderAnalytics();
-  $("#modelVersion").textContent = state.summary.model_version;
+  const mv = $("#modelVersion");
+  if (mv) mv.textContent = summary.model_version || "";
 }
 
 function renderMetrics() {
+  const summary = state.summary || {};
   const metrics = [
-    ["Total Accounts", state.summary.total, "monitored metadata records"],
-    ["Expiring Soon", state.summary.expiring, "inside seven-day alert window"],
-    ["Critical Risk", state.summary.critical, "requires urgent ownership"],
-    ["Expired", state.summary.expired, "access outage risk"],
+    ["Total Accounts", summary.total ?? 0, "monitored metadata records"],
+    ["Expiring Soon", summary.expiring ?? 0, "inside seven-day alert window"],
+    ["Critical Risk", summary.critical ?? 0, "requires urgent ownership"],
+    ["Expired", summary.expired ?? 0, "access outage risk"],
   ];
   $("#metricGrid").innerHTML = metrics
     .map(([label, value, hint]) => `
@@ -156,7 +178,7 @@ function renderExpiryList() {
           <strong>${escapeHtml(item.database_name)}</strong>
           <span class="muted">${escapeHtml(item.username)} - ${escapeHtml(item.owner)}</span>
         </span>
-        ${riskPill(item.risk)}
+        ${riskPill(item.risk || item.risk_level || "Low")}
         <span class="${item.days_to_expiry < 0 ? "danger-text" : "muted"}">
           ${escapeHtml(expiryText(item.days_to_expiry))}
         </span>
@@ -195,9 +217,9 @@ function credentialTableRow(item, columns) {
     database: `<td>${escapeHtml(item.database_name)}</td>`,
     username: `<td>${escapeHtml(item.username)}</td>`,
     owner: `<td>${escapeHtml(item.owner)}</td>`,
-    risk: `<td>${riskPill(item.risk)} <span class="muted">${Math.round(item.risk_probability * 100)}%</span></td>`,
+    risk: `<td>${riskPill(item.risk || item.risk_level || "Low")} <span class="muted">${Math.round((item.risk_probability || 0) * 100)}%</span></td>`,
     expiry: `<td class="${item.days_to_expiry < 0 ? "danger-text" : ""}">${escapeHtml(expiryText(item.days_to_expiry))}</td>`,
-    action: `<td>${escapeHtml(item.recommendation.action)}</td>`,
+    action: `<td>${escapeHtml(safeRecommendation(item).action)}</td>`,
     expiry_action: `<td style="display: flex; align-items: center; justify-content: space-between;">
       <span class="${item.days_to_expiry < 0 ? "danger-text" : ""}">${escapeHtml(expiryText(item.days_to_expiry))}</span>
       <button class="small-button ghost-button" style="padding: 2px 6px;" data-edit-expiry="${item.id}">✏️ Edit</button>
@@ -218,21 +240,21 @@ function renderDetailPanel() {
     <h2>${escapeHtml(item.database_name)}</h2>
     <p class="muted">${escapeHtml(item.username)} - ${escapeHtml(item.secret_ref)}</p>
     <div class="detail-grid">
-      <div class="detail-stat"><span>Risk</span><strong>${riskPill(item.risk)} ${Math.round(item.risk_probability * 100)}%</strong></div>
+      <div class="detail-stat"><span>Risk</span><strong>${riskPill(item.risk || item.risk_level || "Low")} ${Math.round((item.risk_probability || 0) * 100)}%</strong></div>
       <div class="detail-stat"><span>Expiry</span><strong>${escapeHtml(expiryText(item.days_to_expiry))}</strong></div>
       <div class="detail-stat"><span>Owner</span><strong>${escapeHtml(item.owner)}</strong></div>
     </div>
     <div class="timeline" title="Credential age vs expiry cycle"><span style="width:${timelineWidth}%"></span></div>
     <p class="muted">Expiry timeline: ${escapeHtml(item.credential_age)} days old, expires ${escapeHtml(item.expiry_date)}.</p>
-    <h3>${escapeHtml(item.recommendation.action)}</h3>
-    <p>${escapeHtml(item.recommendation.explanation)}</p>
-    <div class="stakeholders">${item.recommendation.stakeholders.map((name) => `<span>${escapeHtml(name)}</span>`).join("")}</div>
+    <h3>${escapeHtml(safeRecommendation(item).action)}</h3>
+    <p>${escapeHtml(safeRecommendation(item).explanation)}</p>
+    <div class="stakeholders">${safeRecommendation(item).stakeholders.map((name) => `<span>${escapeHtml(name)}</span>`).join("")}</div>
     <div class="factor-list">
-      ${item.risk_factors
+      ${(item.risk_factors || item.factors || [])
         .map((factor) => `
           <div class="factor">
             <span><strong>${escapeHtml(factor.label)}</strong><br><span class="muted">${escapeHtml(factor.evidence)}</span></span>
-            <span class="muted">${Math.round(factor.weight * 100)} pts</span>
+            <span class="muted">${Math.round((factor.weight || 0) * 100)} pts</span>
           </div>
         `)
         .join("")}
@@ -241,7 +263,10 @@ function renderDetailPanel() {
 }
 
 function renderRecommendations() {
-  $("#recommendationList").innerHTML = state.recommendations
+  const list = Array.isArray(state.recommendations) ? state.recommendations : [];
+  const target = $("#recommendationList");
+  if (!target) return;
+  target.innerHTML = list
     .map(function (item) {
       var factors = (item.top_factors || []).slice(0, 5);
       var factorBarsHtml = "";
@@ -271,21 +296,22 @@ function renderRecommendations() {
       }
       badgesHtml += '</div>';
 
-      var stakeholdersHtml = item.stakeholders.map(function(name) {
+      var safeRec = safeRecommendation(item);
+      var stakeholdersHtml = safeRec.stakeholders.map(function(name) {
         return '<span>' + escapeHtml(name) + '</span>';
       }).join("");
 
       return '<article class="recommendation-item">' +
         '<div class="rec-topline">' +
           '<div>' +
-            '<p class="eyebrow">' + escapeHtml(item.urgency) + ' urgency</p>' +
+            '<p class="eyebrow">' + escapeHtml(safeRec.urgency) + ' urgency</p>' +
             '<h2>' + escapeHtml(item.database_name) + '</h2>' +
             '<p class="muted">' + escapeHtml(item.username) + ' - ' + escapeHtml(expiryText(item.days_to_expiry)) + '</p>' +
           '</div>' +
-          riskPill(item.risk) +
+          riskPill(item.risk || item.risk_level || 'Low') +
         '</div>' +
-        '<h3>' + escapeHtml(item.action) + '</h3>' +
-        '<p>' + escapeHtml(item.explanation) + '</p>' +
+        '<h3>' + escapeHtml(safeRec.action) + '</h3>' +
+        '<p>' + escapeHtml(safeRec.explanation) + '</p>' +
         factorBarsHtml +
         badgesHtml +
         '<div class="stakeholders">' + stakeholdersHtml + '</div>' +
@@ -360,38 +386,13 @@ function renderAudit() {
 }
 
 function renderAnalytics() {
-  if (state.analytics) {
+  if (!state.analytics) return;
+  // Simple bar charts only — no Plotly dependency
+  if (state.analytics.expiry_buckets) {
     renderBars("#expiryBuckets", state.analytics.expiry_buckets);
-    renderBars("#factorBars", state.analytics.top_factors);
   }
-
-  if (state.analyticsPlots && typeof Plotly !== "undefined") {
-    const config = { responsive: true, displayModeBar: false };
-
-    if (state.analyticsPlots.credentials_by_role) {
-      Plotly.react("plot-credentials-by-role", state.analyticsPlots.credentials_by_role.data, state.analyticsPlots.credentials_by_role.layout, config);
-    }
-    if (state.analyticsPlots.credentials_by_department) {
-      Plotly.react("plot-credentials-by-department", state.analyticsPlots.credentials_by_department.data, state.analyticsPlots.credentials_by_department.layout, config);
-    }
-    if (state.analyticsPlots.expiry_timeline) {
-      Plotly.react("plot-expiry-timeline", state.analyticsPlots.expiry_timeline.data, state.analyticsPlots.expiry_timeline.layout, config);
-    }
-    if (state.analyticsPlots.action_distribution) {
-      Plotly.react("plot-action-distribution", state.analyticsPlots.action_distribution.data, state.analyticsPlots.action_distribution.layout, config);
-    }
-    if (state.analyticsPlots.audit_activity) {
-      Plotly.react("plot-audit-activity", state.analyticsPlots.audit_activity.data, state.analyticsPlots.audit_activity.layout, config);
-    }
-    if (state.analyticsPlots.rotation_status) {
-      Plotly.react("plot-rotation-status", state.analyticsPlots.rotation_status.data, state.analyticsPlots.rotation_status.layout, config);
-    }
-    if (state.analyticsPlots.verification_status) {
-      Plotly.react("plot-verification-status", state.analyticsPlots.verification_status.data, state.analyticsPlots.verification_status.layout, config);
-    }
-    if (state.analyticsPlots.rotation_vs_verification) {
-      Plotly.react("plot-rotation-vs-verification", state.analyticsPlots.rotation_vs_verification.data, state.analyticsPlots.rotation_vs_verification.layout, config);
-    }
+  if (state.analytics.top_factors) {
+    renderBars("#factorBars", state.analytics.top_factors);
   }
 }
 

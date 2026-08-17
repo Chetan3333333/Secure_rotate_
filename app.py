@@ -1,710 +1,366 @@
+"""
+SecureRotate — MySQL-only application.
+Credential expiry monitoring, RF risk scoring, notifications, controlled rotation.
+"""
 from __future__ import annotations
 
 import hashlib
-import json
-import os
-import secrets
-import sqlite3
-import string
-import time
-from datetime import date, datetime, timedelta
-import math
-import random
-import os
-import smtplib
+import logging
 import re
-from email.message import EmailMessage
-from pathlib import Path
+import secrets
+import string
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
 
-import pandas as pd
-import plotly.express as px
+from flask import Flask, jsonify, request, send_file, send_from_directory, session
+from werkzeug.security import check_password_hash, generate_password_hash
 
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from config import (
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
+    DEBUG,
+    FLASK_HOST,
+    FLASK_PORT,
+    MODEL_VERSION,
+    NOTIFY_DAYS,
+    PUBLIC,
+    SECRET_KEY,
+    SMTP_APP_PASSWORD,
+    SMTP_EMAIL,
+    SMTP_HOST,
+    SMTP_PORT,
+    TOKEN_EXPIRY_MINUTES,
+    OTP_MAX_ATTEMPTS,
+)
+from database.connection import DatabaseError, db_connection, db_cursor, execute, init_schema, ping
+from ml.predict import build_factors, classify_risk, model_version, predict_proba
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("securerotate")
 
-# --- EMAIL HELPER ---
-def extract_email(text):
-    match = re.search(r'[\w\.-]+@[\w\.-]+', str(text))
-    return match.group(0) if match else None
-
-def get_recipient_email(credential):
-    owner_val = credential["owner"] if "owner" in credential.keys() else ""
-    email = extract_email(owner_val)
-    if not email:
-        user_val = credential["username"] if "username" in credential.keys() else ""
-        email = extract_email(user_val)
-    return email
-
-def send_real_email(to_email, subject, body):
-    sender = os.environ.get("SMTP_EMAIL")
-    password = os.environ.get("SMTP_APP_PASSWORD")
-    
-    if not sender or not password or not to_email:
-        print(f"Skipping real email to {to_email} because SMTP credentials are not set.")
-        return False
-        
-    msg = EmailMessage()
-    msg.set_content(body)
-    msg["Subject"] = subject
-    msg["From"] = f"SecureRotate <{sender}>"
-    msg["To"] = to_email
-    
-    try:
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(sender, password)
-        server.send_message(msg)
-        server.quit()
-        print(f"Successfully sent email to {to_email}")
-        return True
-    except Exception as e:
-        print(f"Failed to send email to {to_email}: {e}")
-        return False
-# --------------------
+app = Flask(__name__, static_folder=str(PUBLIC), static_url_path="")
+app.secret_key = SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Secure flag only when not running local HTTP debug
+app.config["SESSION_COOKIE_SECURE"] = not DEBUG
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
 
-ROOT = Path(__file__).resolve().parent
-PUBLIC = ROOT / "public"
-DB_PATH = ROOT / "securerotate.db"
-MODEL_VERSION = "rf-surrogate-2.0-simplified"
-
-# --- SMTP Configuration for OTP Emails ---
-SMTP_EMAIL = "chetanchowdarychetan@gmail.com"
-SMTP_APP_PASSWORD = "ozpl bcwz rioc izeq"
-TOKEN_EXPIRY_MINUTES = 15
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def today() -> date:
     return date.today()
 
 
 def iso_now() -> str:
-    return datetime.now().replace(microsecond=0).isoformat()
-
-
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def risk_rank(risk: str) -> int:
-    return {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}.get(risk, 0)
-
-
-def classify(probability: float) -> str:
-    if probability >= 0.80:
-        return "Critical"
-    if probability >= 0.60:
-        return "High"
-    if probability >= 0.30:
-        return "Medium"
-    return "Low"
-
-
-def feature_score(credential: sqlite3.Row | dict, conn: sqlite3.Connection) -> tuple[float, list[dict]]:
-    """Multi-feature behavioral risk model using the same formula as the ML training data."""
-    days = int(credential["days_to_expiry"])
-    cred_id = credential["id"]
-
-    # --- Collect features from the database ---
-    # Rotation stats
-    rotations = conn.execute(
-        "SELECT status, verification_status FROM rotation_history WHERE credential_id = ?", (cred_id,)
-    ).fetchall()
-    total_rotations = len(rotations)
-    successful_rotations = sum(1 for r in rotations if r["verification_status"] == "Verified")
-    failed_rotations = sum(1 for r in rotations if r["verification_status"] == "failed" or r["status"] == "failed")
-
-    # Reminders ignored = notifications that were never acknowledged
-    notifs = conn.execute(
-        "SELECT status, created_at, acknowledged_at FROM notifications WHERE credential_id = ?", (cred_id,)
-    ).fetchall()
-    reminders_ignored = sum(1 for n in notifs if n["status"] in ("Sent", "Reminded", "Escalated") and not n["acknowledged_at"])
-
-    # Average response hours for acknowledged notifications
-    response_hours_list = []
-    for n in notifs:
-        if n["acknowledged_at"] and n["created_at"]:
-            try:
-                created = datetime.fromisoformat(n["created_at"])
-                acked = datetime.fromisoformat(n["acknowledged_at"])
-                delta_hours = max(0, (acked - created).total_seconds() / 3600)
-                response_hours_list.append(delta_hours)
-            except (ValueError, TypeError):
-                pass
-    avg_response_hours = sum(response_hours_list) / len(response_hours_list) if response_hours_list else 48.0
-
-    # Password strength heuristic (based on hash length and salt presence)
-    pwd_hash = credential.get("password_hash", "") if isinstance(credential, dict) else (credential["password_hash"] if "password_hash" in credential.keys() else "")
-    pwd_salt = credential.get("password_salt", "") if isinstance(credential, dict) else (credential["password_salt"] if "password_salt" in credential.keys() else "")
-    password_strength = min(10, max(3, len(pwd_hash) // 16 + (3 if pwd_salt else 0)))
-
-    # MFA status
-    uses_mfa = int(credential.get("uses_mfa", 0) if isinstance(credential, dict) else (credential["uses_mfa"] if "uses_mfa" in credential.keys() else 0))
-
-    # --- Apply the breach-score formula (adapted from generate_large_ml.py) ---
-    # Base score starts with expiry proximity contribution
-    score = 0.0
-
-    # Expiry proximity: expired passwords are highest risk, approaching expiry scales up
-    if days < 0:
-        score += 40 + min(60, (-days) * 4)         # 40-100 for expired
-    elif days <= 3:
-        score += 35                                  # Critical window
-    elif days <= 7:
-        score += 25                                  # Urgent window
-    elif days <= 15:
-        score += max(5, 20 - days)                   # Approaching expiry
-    elif days <= 30:
-        score += 5                                   # Mild concern
-
-    # Behavioral factors (from generate_large_ml.py)
-    score += reminders_ignored * 10
-    score += failed_rotations * 12
-    score -= successful_rotations * 8
-    score -= password_strength * 3
-    score -= uses_mfa * 15
-    score += (avg_response_hours / 24) * 3
-
-    # Normalize to 0.0 - 1.0
-    probability = min(1.0, max(0.0, score / 100.0))
-
-    # --- Build factors list ---
-    factors = []
-    if days < 0:
-        expiry_contrib = (40 + min(60, (-days) * 4)) / 100.0
-        factors.append({"label": "Expired password", "weight": round(expiry_contrib, 3), "evidence": f"Expired {-days} days ago"})
-    elif days <= 3:
-        factors.append({"label": "Expiry window", "weight": 0.35, "evidence": f"{days} days remaining"})
-    elif days <= 7:
-        factors.append({"label": "Expiry window", "weight": 0.25, "evidence": f"{days} days remaining"})
-    elif days <= 15:
-        factors.append({"label": "Expiry window", "weight": round(max(5, 20 - days) / 100, 3), "evidence": f"{days} days remaining"})
-    elif days <= 30:
-        factors.append({"label": "Expiry window", "weight": 0.05, "evidence": f"{days} days remaining"})
-    else:
-        factors.append({"label": "Expiry window", "weight": 0.0, "evidence": "Healthy"})
-
-    if reminders_ignored > 0:
-        factors.append({"label": "Reminders ignored", "weight": round(reminders_ignored * 10 / 100, 3), "evidence": f"{reminders_ignored} unacknowledged alerts"})
-    if failed_rotations > 0:
-        factors.append({"label": "Failed rotations", "weight": round(failed_rotations * 12 / 100, 3), "evidence": f"{failed_rotations} of {total_rotations} rotations failed"})
-    if successful_rotations > 0:
-        factors.append({"label": "Successful rotations", "weight": round(-successful_rotations * 8 / 100, 3), "evidence": f"{successful_rotations} verified rotations"})
-    if not uses_mfa:
-        factors.append({"label": "No MFA", "weight": 0.15, "evidence": "Multi-factor authentication disabled"})
-    else:
-        factors.append({"label": "MFA enabled", "weight": -0.15, "evidence": "Multi-factor authentication active"})
-    if avg_response_hours > 24:
-        factors.append({"label": "Slow response time", "weight": round((avg_response_hours / 24) * 3 / 100, 3), "evidence": f"Avg {round(avg_response_hours, 1)}h to respond"})
-    factors.append({"label": "Password strength", "weight": round(-password_strength * 3 / 100, 3), "evidence": f"Score: {password_strength}/10"})
-
-    # Sort factors by absolute weight descending
-    factors.sort(key=lambda f: abs(f["weight"]), reverse=True)
-
-    return probability, factors
-
-
-def recommend_action(credential: sqlite3.Row | dict, risk: str, probability: float, factors: list[dict]) -> dict:
-    days = int(credential["days_to_expiry"])
-
-    if days < 0:
-        action = "Immediate Rotation"
-        urgency = "Breach"
-    elif days <= 3:
-        action = "Immediate Rotation"
-        urgency = "Critical"
-    elif days <= 7:
-        action = "Rotate Within 24 Hours"
-        urgency = "High"
-    elif days <= 30:
-        action = "Schedule Rotation"
-        urgency = "Medium"
-    else:
-        action = "Monitor"
-        urgency = "Low"
-
-    # Dynamic stakeholders based on risk severity
-    stakeholders = ["Account Owner", "Security Team"]
-    if risk in ("Critical", "High"):
-        stakeholders.append("CISO")
-    if risk == "Critical":
-        stakeholders.append("Compliance Team")
-
-    # Approval required for high-risk items
-    approval_required = risk in ("Critical", "High")
-
-    # Richer explanation referencing top contributing factors
-    top_risk_factors = [f for f in factors if f["weight"] > 0][:3]
-    if top_risk_factors:
-        factor_reasons = ", ".join(f"{f['label'].lower()} ({f['evidence'].lower()})" for f in top_risk_factors)
-        explanation = f"{credential['username']} is {risk.lower()} risk (score {round(probability * 100)}%). Top drivers: {factor_reasons}."
-    else:
-        explanation = f"{credential['username']} is {risk.lower()} risk. It expires in {days} days. No significant risk factors detected."
-
-    return {
-        "action": action,
-        "urgency": urgency,
-        "stakeholders": stakeholders,
-        "approval_required": approval_required,
-        "explanation": explanation,
-    }
+    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
 
 
 def generate_password(length: int = 24) -> str:
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
     while True:
-        password = "".join(secrets.choice(alphabet) for _ in range(length))
-        if (
-            any(c.islower() for c in password)
-            and any(c.isupper() for c in password)
-            and any(c.isdigit() for c in password)
-            and any(c in "!@#$%^&*()-_=+" for c in password)
-        ):
-            return password
+        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (any(c.islower() for c in pwd) and any(c.isupper() for c in pwd)
+                and any(c.isdigit() for c in pwd) and any(c in "!@#$%^&*()-_=+" for c in pwd)):
+            return pwd
 
 
 def hash_secret(secret: str, salt: str) -> str:
-    digest = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt.encode("utf-8"), 600_000)
-    return digest.hex()
+    return hashlib.pbkdf2_hmac("sha256", secret.encode(), salt.encode(), 600_000).hex()
 
 
-def required_text(payload: dict, key: str, label: str) -> str:
-    value = str(payload.get(key, "")).strip()
-    if not value:
-        raise ValueError(f"{label} is required")
-    return value
+def extract_email(text: str) -> Optional[str]:
+    m = re.search(r"[\w.\-+]+@[\w.\-]+\.\w+", str(text or ""))
+    return m.group(0) if m else None
 
 
-def create_user_credential(conn: sqlite3.Connection, payload: dict) -> dict:
-    database_name = required_text(payload, "database_name", "Database name")
-    username = required_text(payload, "username", "Username")
-    password = required_text(payload, "password", "Password")
-    owner = required_text(payload, "owner", "Owner name")
-    expiry_date = required_text(payload, "expiry_date", "Expiry date")
-    uses_mfa = int(payload.get("uses_mfa", 0))
+def require_admin():
+    """Simple session gate for admin APIs."""
+    if session.get("role") != "admin":
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
 
+
+def risk_rank(level: str) -> int:
+    return {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}.get(level, 0)
+
+
+# ---------------------------------------------------------------------------
+# Feature extraction + ML scoring
+# ---------------------------------------------------------------------------
+
+def collect_features(cred: dict, conn) -> dict:
+    cid = cred["id"]
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT status, verification_status FROM rotation_history WHERE credential_id = %s",
+            (cid,),
+        )
+        rotations = cur.fetchall()
+        cur.execute(
+            "SELECT status, created_at, acknowledged_at FROM notifications WHERE credential_id = %s",
+            (cid,),
+        )
+        notifs = cur.fetchall()
+
+    total = len(rotations)
+    successful = sum(1 for r in rotations if r.get("verification_status") == "Verified")
+    failed = sum(1 for r in rotations if (r.get("verification_status") or "").lower() == "failed"
+                 or (r.get("status") or "").lower() == "failed")
+    reminders_ignored = sum(
+        1 for n in notifs
+        if n.get("status") in ("Sent", "Reminded", "Escalated") and not n.get("acknowledged_at")
+    )
+
+    response_hours = []
+    for n in notifs:
+        if n.get("acknowledged_at") and n.get("created_at"):
+            try:
+                created = n["created_at"] if isinstance(n["created_at"], datetime) else datetime.fromisoformat(str(n["created_at"]))
+                acked = n["acknowledged_at"] if isinstance(n["acknowledged_at"], datetime) else datetime.fromisoformat(str(n["acknowledged_at"]))
+                response_hours.append(max(0.0, (acked - created).total_seconds() / 3600))
+            except Exception:
+                pass
+    avg_resp = sum(response_hours) / len(response_hours) if response_hours else 48.0
+
+    pwd_hash = cred.get("password_hash") or ""
+    pwd_salt = cred.get("password_salt") or ""
+    strength = min(10, max(3, len(pwd_hash) // 16 + (3 if pwd_salt else 0)))
+
+    expiry = cred["expiry_date"]
+    if isinstance(expiry, str):
+        expiry = date.fromisoformat(expiry[:10])
+    days = (expiry - today()).days
+
+    # login_frequency_per_week is not stored in the credentials table yet.
+    # Use a simple, explainable proxy for the prototype (production would
+    # pull real telemetry). Privileged accounts tend to be used less often.
+    login_freq = 8 if int(cred.get("is_privileged") or 0) else 18
+
+    return {
+        "days_to_expiry": days,
+        "total_rotations": total,
+        "successful_rotations": successful,
+        "failed_rotations": failed,
+        "reminders_ignored": reminders_ignored,
+        "avg_response_hours": round(avg_resp, 1),
+        "login_frequency_per_week": login_freq,
+        "password_strength_score": strength,
+        "uses_mfa": int(cred.get("uses_mfa") or 0),
+        "is_privileged": int(cred.get("is_privileged") or 0),
+        "is_production": int(cred.get("is_production") or 0),
+        "database_name": cred.get("database_name") or "MySQL",
+    }
+
+
+def score_credential(cred: dict, conn) -> dict:
+    features = collect_features(cred, conn)
     try:
-        expiry = date.fromisoformat(expiry_date)
-    except ValueError as exc:
-        raise ValueError("Expiry date must use YYYY-MM-DD format") from exc
-
-    days_to_expiry = (expiry - today()).days
-    credential_age = max(0, min(365, 90 - days_to_expiry))
-    salt = secrets.token_hex(16)
-    secret_ref = f"vault://securerotate/{database_name.lower().replace(' ', '-')}/{username}"
-
-    cursor = conn.execute(
-        """
-        INSERT INTO credentials (
-            database_name, username, owner, expiry_date, status, secret_ref,
-            password_hash, password_salt, last_rotated_at, created_at, uses_mfa
-        ) VALUES (?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            database_name,
-            username,
-            owner,
-            expiry.isoformat(),
-            secret_ref,
-            hash_secret(password, salt),
-            salt,
-            (today() - timedelta(days=credential_age)).isoformat(),
-            iso_now(),
-            uses_mfa,
-        ),
-    )
-    credential_id = cursor.lastrowid
-    conn.execute(
-        "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (owner, "submit_credential", "credential", credential_id, f"User submitted {database_name}/{username} for monitoring.", iso_now()),
-    )
-    refresh_notifications(conn)
-    item = next(credential for credential in enriched_credentials(conn) if credential["id"] == credential_id)
+        proba = predict_proba(features)
+    except Exception as exc:
+        logger.warning("ML predict failed for cred %s: %s", cred.get("id"), exc)
+        # Safe fallback based on expiry only
+        days = features["days_to_expiry"]
+        if days < 0:
+            proba = 0.85
+        elif days <= 3:
+            proba = 0.70
+        elif days <= 7:
+            proba = 0.55
+        elif days <= 30:
+            proba = 0.30
+        else:
+            proba = 0.10
+    score, level = classify_risk(proba)
+    factors = build_factors(features, proba)
     return {
-        "id": credential_id,
-        "risk": item["risk"],
-        "risk_probability": item["risk_probability"],
-        "recommendation": item["recommendation"],
-        "days_to_expiry": item["days_to_expiry"],
+        "risk_probability": round(proba, 4),
+        "risk_score": score,
+        "risk_level": level,
+        "days_to_expiry": features["days_to_expiry"],
+        "factors": factors,
+        "model_version": model_version(),
+        "features": features,
     }
 
 
-def init_db() -> None:
-    with connect() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS credentials (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                database_name TEXT NOT NULL,
-                username TEXT NOT NULL,
-                owner TEXT NOT NULL,
-                expiry_date TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Active',
-                secret_ref TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                password_salt TEXT NOT NULL,
-                last_rotated_at TEXT,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                credential_id INTEGER NOT NULL,
-                recipients TEXT NOT NULL,
-                message TEXT NOT NULL,
-                channel TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                acknowledged_at TEXT,
-                FOREIGN KEY (credential_id) REFERENCES credentials(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS rotation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                credential_id INTEGER NOT NULL,
-                requested_by TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                verification_status TEXT NOT NULL,
-                details TEXT NOT NULL,
-                FOREIGN KEY (credential_id) REFERENCES credentials(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                actor TEXT NOT NULL,
-                action TEXT NOT NULL,
-                entity TEXT NOT NULL,
-                entity_id INTEGER NOT NULL,
-                details TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS reset_tokens (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token TEXT NOT NULL UNIQUE,
-                credential_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                otp_code TEXT,
-                otp_verified INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (credential_id) REFERENCES credentials(id)
-            );
-            """
+def recommend_action(days: int, level: str) -> dict:
+    """Return a recommendation dict that matches what the dashboard UI expects."""
+    if days < 0 or level == "Critical":
+        action, urgency = "Immediate Rotation", "Critical" if days >= 0 else "Breach"
+        explanation = (
+            "Credential is expired or scored Critical. Rotate now and verify connectivity."
+            if days >= 0 else
+            "Credential has already expired. Immediate remediation is required."
         )
-        # Migration: add uses_mfa column if it doesn't exist yet
-        try:
-            conn.execute("ALTER TABLE credentials ADD COLUMN uses_mfa INTEGER NOT NULL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-        count = conn.execute("SELECT COUNT(*) AS c FROM credentials").fetchone()["c"]
-        if count:
-            refresh_notifications(conn)
-            return
-
-        seed_credentials(conn)
-        refresh_notifications(conn)
-
-
-def seed_credentials(conn: sqlite3.Connection) -> None:
-    rows = [
-        ("MySQL", "john.doe@company.com", "John Doe", -1, 0),
-        ("PostgreSQL", "alice.smith@company.com", "Alice Smith", 2, 1),
-        ("Oracle", "bob.jenkins@company.com", "Bob Jenkins", 6, 1),
-        ("SQL Server", "sarah.connor@company.com", "Sarah Connor", 9, 0),
-        ("MySQL", "mike.ross@company.com", "Mike Ross", 18, 1),
-        ("PostgreSQL", "harvey.specter@company.com", "Harvey Specter", 24, 1),
-        ("Oracle", "rachel.zane@company.com", "Rachel Zane", 33, 0),
-        ("SQL Server", "donna.paulsen@company.com", "Donna Paulsen", 41, 1),
-        ("MySQL", "louis.litt@company.com", "Louis Litt", 57, 1),
-        ("PostgreSQL", "jessica.pearson@company.com", "Jessica Pearson", 77, 1),
-        ("Oracle", "katrina.bennett@company.com", "Katrina Bennett", 4, 0),
-        ("SQL Server", "alex.williams@company.com", "Alex Williams", 120, 1),
-    ]
-
-    for row in rows:
-        salt = secrets.token_hex(16)
-        placeholder_secret = generate_password()
-        conn.execute(
-            """
-            INSERT INTO credentials (
-                database_name, username, owner, expiry_date, status, secret_ref,
-                password_hash, password_salt, last_rotated_at, created_at, uses_mfa
-            ) VALUES (?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row[0],
-                row[1],
-                row[2],
-                (today() + timedelta(days=row[3])).isoformat(),
-                f"vault://securerotate/{row[0].lower()}/{row[1]}",
-                hash_secret(placeholder_secret, salt),
-                salt,
-                (today() - timedelta(days=90 - row[3])).isoformat(),
-                iso_now(),
-                row[4],
-            ),
-        )
-
-    conn.execute(
-        "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        ("system", "seed_demo", "workspace", 0, "Loaded synthetic database credential metadata for the SecureRotate demo.", iso_now()),
-    )
-
-
-def refresh_notifications(conn: sqlite3.Connection) -> None:
-    rows = enriched_credentials(conn)
-    for credential in rows:
-        if credential["days_to_expiry"] <= 7:
-            recipients = credential["owner"] + f" ({credential['username']})"
-            # Tiered Escalation Logic with Friendly Messages
-            days = credential["days_to_expiry"]
-            if days <= 0:
-                channel = 'Security Incident'
-                status = 'Escalated'
-                level = 'Expired'
-                message = f"Hi {credential['owner']},\n\nYour {credential['database_name']} database password has EXPIRED. Access is locked."
-            elif days == 1:
-                channel = 'Slack Urgent'
-                status = 'Sent'
-                level = 'Critical Warning'
-                message = f"Hi {credential['owner']},\n\nCritical Warning! Your {credential['database_name']} password expires in {days} day. Please rotate immediately."
-            elif days <= 3:
-                channel = 'Slack Urgent'
-                status = 'Sent'
-                level = 'Urgent Warning'
-                message = f"Hi {credential['owner']},\n\nUrgent Warning! Your {credential['database_name']} password expires in {days} days. Please rotate."
-            elif days <= 5:
-                channel = 'Email Reminder'
-                status = 'Sent'
-                level = 'Warning'
-                message = f"Hi {credential['owner']},\n\nWarning! Your {credential['database_name']} password expires in {days} days."
-            else:
-                channel = 'Email Reminder'
-                status = 'Sent'
-                level = 'Warning'
-                message = f"Hi {credential['owner']},\n\nWarning! Your {credential['database_name']} password expires in {days} days."
-                
-            # Check if this exact message was already sent for this credential
-            existing = conn.execute("SELECT id FROM notifications WHERE credential_id = ? AND message = ?", (credential["id"], message)).fetchone()
-            if not existing:
-                # Auto-resolve older automated alerts for this credential so the dashboard stays clean
-                conn.execute("UPDATE notifications SET status = 'Resolved' WHERE credential_id = ? AND status IN ('Sent', 'Reminded')", (credential["id"],))
-                
-                conn.execute(
-                    """
-                    INSERT INTO notifications(credential_id, recipients, message, channel, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (credential["id"], recipients, message, channel, status, iso_now()),
-                )
-                conn.execute(
-                    "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    ("notification-engine", "notify_stakeholders", "credential", credential["id"], message, iso_now()),
-                )
-                
-                # Send real email!
-                to_email = get_recipient_email(credential)
-                if to_email:
-                    subject = f"[{level}] SecureRotate: {credential['database_name']} Password Expiry"
-                    send_real_email(to_email, subject, message)
-
-
-def row_to_dict(row: sqlite3.Row) -> dict:
-    return {key: row[key] for key in row.keys()}
-
-
-def enriched_credentials(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM credentials ORDER BY expiry_date ASC").fetchall()
-    result = []
-    for row in rows:
-        item = row_to_dict(row)
-        expiry = date.fromisoformat(item["expiry_date"])
-        item["days_to_expiry"] = (expiry - today()).days
-        probability, factors = feature_score(item, conn)
-        risk = classify(probability)
-        recommendation = recommend_action(item, risk, probability, factors)
-        item["risk_probability"] = round(probability, 3)
-        item["risk"] = risk
-        item["risk_factors"] = factors
-        item["recommendation"] = recommendation
-        item["stakeholders"] = recommendation["stakeholders"]
-        item["password_hash"] = "redacted"
-        item["password_salt"] = "redacted"
-        result.append(item)
-    return result
-
-
-def apply_filters(credentials: list[dict], query: dict) -> list[dict]:
-    search = query.get("search", [""])[0].lower().strip()
-    risk = query.get("risk", ["All"])[0]
-
-    def keep(item: dict) -> bool:
-        haystack = " ".join(str(item[key]) for key in ("database_name", "username", "owner")).lower()
-        if search and search not in haystack:
-            return False
-        if risk != "All" and item["risk"] != risk:
-            return False
-        return True
-
-    return [item for item in credentials if keep(item)]
-
-
-def summary_payload(conn: sqlite3.Connection, query: dict) -> dict:
-    credentials = apply_filters(enriched_credentials(conn), query)
-    total = len(credentials)
-    expiring = sum(1 for item in credentials if 0 <= item["days_to_expiry"] <= 7)
-    expired = sum(1 for item in credentials if item["days_to_expiry"] < 0)
-    critical = sum(1 for item in credentials if item["risk"] == "Critical")
-    risk_distribution = {risk: 0 for risk in ["Low", "Medium", "High", "Critical"]}
-    for item in credentials:
-        risk_distribution[item["risk"]] += 1
-    rotations = conn.execute("SELECT * FROM rotation_history ORDER BY id DESC").fetchall()
-    success = sum(1 for row in rotations if row["verification_status"] == "Verified")
-    return {
-        "total": total,
-        "expiring": expiring,
-        "expired": expired,
-        "critical": critical,
-        "risk_distribution": risk_distribution,
-        "rotation_success": success,
-        "model_version": MODEL_VERSION,
-        "generated_at": iso_now(),
-    }
-
-
-def recommendation_payload(conn: sqlite3.Connection, query: dict) -> list[dict]:
-    credentials = apply_filters(enriched_credentials(conn), query)
-    ordered = sorted(credentials, key=lambda item: (risk_rank(item["risk"]), item["risk_probability"], -item["days_to_expiry"]), reverse=True)
-    return [
-        {
-            "credential_id": item["id"],
-            "database_name": item["database_name"],
-            "username": item["username"],
-            "risk": item["risk"],
-            "risk_probability": item["risk_probability"],
-            "days_to_expiry": item["days_to_expiry"],
-            "uses_mfa": item.get("uses_mfa", 0),
-            **item["recommendation"],
-            "top_factors": item["risk_factors"],
-        }
-        for item in ordered
-    ]
-
-
-def analytics_payload(conn: sqlite3.Connection, query: dict) -> dict:
-    credentials = apply_filters(enriched_credentials(conn), query)
-    buckets = [
-        ("Expired", lambda item: item["days_to_expiry"] < 0),
-        ("0-7 days", lambda item: 0 <= item["days_to_expiry"] <= 7),
-        ("8-15 days", lambda item: 8 <= item["days_to_expiry"] <= 15),
-        ("16-30 days", lambda item: 16 <= item["days_to_expiry"] <= 30),
-        ("31+ days", lambda item: item["days_to_expiry"] > 30),
-    ]
-    expiry_buckets = [{"label": label, "value": sum(1 for item in credentials if fn(item))} for label, fn in buckets]
-    factor_totals: dict[str, float] = {}
-    for item in credentials:
-        for factor in item["risk_factors"]:
-            factor_totals[factor["label"]] = factor_totals.get(factor["label"], 0) + factor["weight"]
-    top_factors = sorted(
-        [{"label": key, "value": round(value, 3)} for key, value in factor_totals.items()],
-        key=lambda item: item["value"],
-        reverse=True,
-    )[:6]
-    rotations = [row_to_dict(row) for row in conn.execute("SELECT * FROM rotation_history ORDER BY id DESC").fetchall()]
-    return {"expiry_buckets": expiry_buckets, "top_factors": top_factors, "rotations": rotations}
-
-
-def rotate_credential(conn: sqlite3.Connection, credential_id: int, actor: str) -> dict:
-    credential = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
-    if not credential:
-        raise ValueError("Credential not found")
-
-    item = row_to_dict(credential)
-    item["days_to_expiry"] = (date.fromisoformat(item["expiry_date"]) - today()).days
-    probability, factors = feature_score(item, conn)
-    risk = classify(probability)
-    recommendation = recommend_action(item, risk, probability, factors)
-
-    started = iso_now()
-    conn.execute(
-        """
-        INSERT INTO rotation_history(credential_id, requested_by, status, started_at, verification_status, details)
-        VALUES (?, ?, 'Running', ?, 'Pending', ?)
-        """,
-        (credential_id, actor or "demo-admin", started, "Generated a strong replacement secret and staged vault update."),
-    )
-    history_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
-
-    password = generate_password()
-    salt = secrets.token_hex(16)
-    new_expiry = (today() + timedelta(days=90)).isoformat()
-    time.sleep(0.35)
-    
-    # Always succeed for the demo now that dependencies are gone
-    verification_ok = True
-
-    status = "Completed" if verification_ok else "Failed"
-    verification = "Verified" if verification_ok else "Failed"
-    details = (
-        "Password rotated through controlled demo connector, secret hash stored, and connectivity verified."
-        if verification_ok
-        else "Rotation staged, but dependency verification failed. Previous secret retained."
-    )
-
-    if verification_ok:
-        conn.execute(
-            """
-            UPDATE credentials
-            SET expiry_date = ?, password_hash = ?, password_salt = ?, last_rotated_at = ?, status = 'Active'
-            WHERE id = ?
-            """,
-            (new_expiry, hash_secret(password, salt), salt, iso_now(), credential_id),
-        )
-        conn.execute("UPDATE notifications SET status = 'Resolved' WHERE credential_id = ? AND status != 'Acknowledged'", (credential_id,))
+    elif days <= 3 or level == "High":
+        action, urgency = "Rotate Within 24 Hours", "High"
+        explanation = "High risk or very short expiry window. Schedule controlled rotation within a day."
+    elif days <= 7:
+        action, urgency = "Rotate Within 24 Hours", "High"
+        explanation = "Expiry is inside the seven-day window. Prefer rotation within 24 hours."
+    elif days <= 30:
+        action, urgency = "Schedule Rotation", "Medium"
+        explanation = "Expiry is approaching. Plan rotation with the owner and security team."
     else:
-        conn.execute(
-            "UPDATE credentials SET status = 'Needs Review' WHERE id = ?",
-            (credential_id,),
-        )
-
-    conn.execute(
-        """
-        UPDATE rotation_history
-        SET status = ?, completed_at = ?, verification_status = ?, details = ?
-        WHERE id = ?
-        """,
-        (status, iso_now(), verification, details, history_id),
-    )
-    conn.execute(
-        "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (actor or "demo-admin", "rotate_credential", "credential", credential_id, details, iso_now()),
-    )
-    refresh_notifications(conn)
-    return {"history_id": history_id, "status": status, "verification_status": verification, "details": details}
+        action, urgency = "Monitor", "Low"
+        explanation = "Risk and expiry look healthy. Continue monitoring and keep owners notified."
+    stakeholders = ["Account Owner", "Security Team"]
+    if level in ("Critical", "High"):
+        stakeholders.append("CISO")
+    if level == "Critical":
+        stakeholders.append("Compliance Team")
+    return {
+        "action": action,
+        "urgency": urgency,
+        "explanation": explanation,
+        "stakeholders": stakeholders,
+        "approval_required": level in ("Critical", "High"),
+    }
 
 
-import re
-from email.message import EmailMessage
+# ---------------------------------------------------------------------------
+# Seed + notifications
+# ---------------------------------------------------------------------------
 
-if os.path.exists(".env"):
-    with open(".env") as f:
-        for line in f:
-            if '=' in line and not line.strip().startswith('#'):
-                k, v = line.strip().split('=', 1)
-                os.environ[k] = v
+def seed_if_empty(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM credentials")
+        if cur.fetchone()["c"] > 0:
+            return
+        rows = [
+            ("MySQL", "john.doe@company.com", "John Doe", -1, 0, 0, 1),
+            ("PostgreSQL", "alice.smith@company.com", "Alice Smith", 2, 1, 0, 1),
+            ("Oracle", "bob.jenkins@company.com", "Bob Jenkins", 6, 1, 1, 1),
+            ("SQL Server", "sarah.connor@company.com", "Sarah Connor", 9, 0, 0, 1),
+            ("MySQL", "mike.ross@company.com", "Mike Ross", 18, 1, 0, 0),
+            ("PostgreSQL", "harvey.specter@company.com", "Harvey Specter", 24, 1, 1, 1),
+            ("Oracle", "rachel.zane@company.com", "Rachel Zane", 33, 0, 0, 0),
+            ("SQL Server", "donna.paulsen@company.com", "Donna Paulsen", 41, 1, 0, 1),
+            ("MySQL", "louis.litt@company.com", "Louis Litt", 57, 1, 0, 0),
+            ("PostgreSQL", "jessica.pearson@company.com", "Jessica Pearson", 77, 1, 1, 1),
+            ("Oracle", "katrina.bennett@company.com", "Katrina Bennett", 4, 0, 1, 1),
+            ("MariaDB", "alex.williams@company.com", "Alex Williams", 120, 1, 0, 0),
+        ]
+        for db, user, owner, days, mfa, priv, prod in rows:
+            salt = secrets.token_hex(16)
+            secret = generate_password()
+            exp = (today() + timedelta(days=days)).isoformat()
+            ref = f"vault://securerotate/{db.lower()}/{user}"
+            cur.execute(
+                """INSERT INTO credentials
+                   (database_name, username, owner, expiry_date, status, secret_ref,
+                    password_hash, password_salt, last_rotated_at, created_at, uses_mfa, is_privileged, is_production)
+                   VALUES (%s,%s,%s,%s,'Active',%s,%s,%s,NULL,%s,%s,%s,%s)""",
+                (db, user, owner, exp, ref, hash_secret(secret, salt), salt, iso_now(), mfa, priv, prod),
+            )
+        # Admin user
+        cur.execute("SELECT COUNT(*) AS c FROM app_users WHERE email = %s", (ADMIN_EMAIL,))
+        if cur.fetchone()["c"] == 0:
+            pwd = ADMIN_PASSWORD
+            if not pwd:
+                logger.error(
+                    "ADMIN_PASSWORD env var is required to seed admin user. "
+                    "Credentials were seeded but no admin account was created."
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO app_users (email, password_hash, role, status) VALUES (%s,%s,'admin','active')",
+                    (ADMIN_EMAIL, generate_password_hash(pwd)),
+                )
+                logger.warning("Seeded admin user %s — change password in production", ADMIN_EMAIL)
+    conn.commit()
+    logger.info("Seeded demo credentials")
 
-app = Flask(__name__, static_folder="public", static_url_path="")
+
+def refresh_notifications(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM credentials")
+        creds = cur.fetchall()
+        for cred in creds:
+            exp = cred["expiry_date"]
+            if isinstance(exp, str):
+                exp = date.fromisoformat(exp[:10])
+            days = (exp - today()).days
+            # Determine threshold
+            threshold = None
+            for t in sorted(NOTIFY_DAYS):
+                if days <= t:
+                    threshold = t
+                    break
+            if threshold is None:
+                continue
+            # Idempotency: skip if open notification already exists for this threshold
+            cur.execute(
+                """SELECT id FROM notifications
+                   WHERE credential_id = %s AND threshold_days = %s
+                     AND status IN ('Sent','Reminded','Escalated') AND acknowledged_at IS NULL
+                   LIMIT 1""",
+                (cred["id"], threshold),
+            )
+            if cur.fetchone():
+                continue
+            if days < 0:
+                msg = f"Hi {cred['owner']}, your {cred['database_name']} password has EXPIRED. Access may be locked."
+                level = "EXPIRED"
+            elif days <= 1:
+                msg = f"Hi {cred['owner']}, CRITICAL: {cred['database_name']} password expires in {days} day(s)."
+                level = "CRITICAL"
+            elif days <= 7:
+                msg = f"Hi {cred['owner']}, URGENT: {cred['database_name']} password expires in {days} days."
+                level = "URGENT"
+            else:
+                msg = f"Hi {cred['owner']}, reminder: {cred['database_name']} password expires in {days} days."
+                level = "WARNING"
+            cur.execute(
+                """INSERT INTO notifications
+                   (credential_id, recipients, channel, message, status, threshold_days, created_at)
+                   VALUES (%s,%s,'email',%s,'Sent',%s,%s)""",
+                (cred["id"], f"{cred['owner']} ({cred['username']})", msg, threshold, iso_now()),
+            )
+            logger.info("Notification created credential=%s threshold=%s level=%s", cred["id"], threshold, level)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Routes — pages
+# ---------------------------------------------------------------------------
 
 @app.route("/")
 def serve_index():
     return send_file(PUBLIC / "login.html")
 
+
+
+@app.route("/reset")
+@app.route("/reset.html")
+@app.route("/reset/<token>")
+def serve_reset(token=None):
+    return send_file(PUBLIC / "reset.html")
+
+
+@app.route("/user")
+def serve_user():
+    return send_file(PUBLIC / "user.html")
+
+
+@app.route("/api/user/profile", methods=["GET"])
+def api_user_profile():
+    if not session.get("user_id") or session.get("role") != "user":
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({
+        "email": session.get("email"),
+        "role": session.get("role"),
+    })
+
+
 @app.route("/admin")
 def serve_admin():
-    return send_file(PUBLIC / "index.html")
+    return send_file(PUBLIC / "admin.html")
+
 
 @app.route("/<path:filename>")
 def serve_static(filename):
@@ -712,610 +368,790 @@ def serve_static(filename):
         return send_from_directory(PUBLIC, filename)
     return "Not Found", 404
 
-def get_query_dict():
-    return {k: request.args.getlist(k) for k in request.args.keys()}
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
 
 @app.route("/api/login", methods=["POST"])
 def api_login():
     payload = request.json or {}
-    email = payload.get("email", "")
-    password = payload.get("password", "")
-    if email == "admin@securedb.com" and password == "admin123":
-        return jsonify({"ok": True})
-    return jsonify({"error": "Invalid credentials"}), 401
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
+    try:
+        row = execute(
+            "SELECT id, email, password_hash, role, status FROM app_users WHERE email = %s",
+            (email,),
+            fetch="one",
+        )
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+    if not row or row.get("status") != "active":
+        return jsonify({"error": "Invalid credentials"}), 401
+    if not check_password_hash(row["password_hash"], password):
+        return jsonify({"error": "Invalid credentials"}), 401
+    session.clear()
+    session["user_id"] = row["id"]
+    session["email"] = row["email"]
+    session["role"] = row["role"]
+    logger.info("Login success user=%s role=%s", row["email"], row["role"])
+    return jsonify({"ok": True, "role": row["role"], "email": row["email"]})
+
+
+
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    """Create a standard user account. Admin accounts are never created here."""
+    payload = request.json or {}
+    email = (payload.get("email") or "").strip().lower()
+    password = payload.get("password") or ""
+
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return jsonify({"error": "Enter a valid email address"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+
+    try:
+        existing = execute(
+            "SELECT id FROM app_users WHERE email = %s",
+            (email,),
+            fetch="one",
+        )
+        if existing:
+            return jsonify({"error": "An account with this email already exists"}), 409
+
+        execute(
+            """INSERT INTO app_users (email, password_hash, role, status)
+               VALUES (%s, %s, 'user', 'active')""",
+            (email, generate_password_hash(password)),
+        )
+        return jsonify({"ok": True, "role": "user", "email": email}), 201
+    except DatabaseError:
+        logger.exception("User registration failed")
+        return jsonify({"error": "Unable to create account"}), 503
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/me", methods=["GET"])
+def api_me():
+    if not session.get("user_id"):
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify({"email": session.get("email"), "role": session.get("role")})
+
+
+# ---------------------------------------------------------------------------
+# Credentials / dashboard APIs
+# ---------------------------------------------------------------------------
 
 @app.route("/api/summary", methods=["GET"])
 def api_summary():
-    with connect() as conn:
-        refresh_notifications(conn)
-        return jsonify(summary_payload(conn, get_query_dict()))
+    """Dashboard summary. Shape matches what public/app.js expects."""
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        with db_connection() as conn:
+            refresh_notifications(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM credentials")
+                creds = cur.fetchall()
+            risk_distribution = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+            total = 0
+            expired = 0
+            expiring = 0  # inside 7-day window (including already expired)
+            critical = 0
+            for c in creds:
+                scored = score_credential(c, conn)
+                level = scored["risk_level"]
+                risk_distribution[level] = risk_distribution.get(level, 0) + 1
+                total += 1
+                days = scored["days_to_expiry"]
+                if days < 0:
+                    expired += 1
+                if days <= 7:
+                    expiring += 1
+                if level == "Critical":
+                    critical += 1
+            return jsonify({
+                "total": total,
+                "expiring": expiring,
+                "critical": critical,
+                "expired": expired,
+                "risk_distribution": risk_distribution,
+                "model_version": model_version(),
+            })
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
 
 @app.route("/api/credentials", methods=["GET"])
 def api_credentials_list():
-    with connect() as conn:
-        refresh_notifications(conn)
-        return jsonify(apply_filters(enriched_credentials(conn), get_query_dict()))
-
-@app.route("/api/credentials/<int:credential_id>", methods=["GET"])
-def api_credential_detail(credential_id):
-    with connect() as conn:
-        refresh_notifications(conn)
-        match = next((item for item in enriched_credentials(conn) if item["id"] == credential_id), None)
-        if match:
-            return jsonify(match)
-        return jsonify({"error": "Credential not found"}), 404
-
-@app.route("/api/recommendations", methods=["GET"])
-def api_recommendations():
-    with connect() as conn:
-        refresh_notifications(conn)
-        return jsonify(recommendation_payload(conn, get_query_dict()))
-
-@app.route("/api/notifications", methods=["GET"])
-def api_notifications():
-    with connect() as conn:
-        refresh_notifications(conn)
-        # Get ALL credentials (one row per credential, no duplicates)
-        creds = conn.execute("SELECT * FROM credentials ORDER BY expiry_date ASC").fetchall()
-        result = []
-        for cred in creds:
-            c = row_to_dict(cred)
-            expiry = date.fromisoformat(c["expiry_date"])
-            c["days_to_expiry"] = (expiry - today()).days
-            # Get the latest notification for this credential (if any)
-            latest_noti = conn.execute(
-                "SELECT * FROM notifications WHERE credential_id = ? ORDER BY id DESC LIMIT 1",
-                (c["id"],),
-            ).fetchone()
-            if latest_noti:
-                n = row_to_dict(latest_noti)
-                c["notification_id"] = n["id"]
-                c["channel"] = n["channel"]
-                c["recipients"] = n["recipients"]
-                c["message"] = n["message"]
-                c["notification_status"] = n["status"]
-                c["sent_date"] = n["created_at"]
-            else:
-                c["notification_id"] = None
-                c["channel"] = "—"
-                c["recipients"] = c["owner"]
-                c["message"] = ""
-                c["notification_status"] = "No Alerts"
-                c["sent_date"] = "—"
-            result.append(c)
-        return jsonify(result)
-
-@app.route("/api/audit", methods=["GET"])
-def api_audit():
-    with connect() as conn:
-        refresh_notifications(conn)
-        rows = conn.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 80").fetchall()
-        return jsonify([row_to_dict(row) for row in rows])
-
-@app.route("/api/analytics", methods=["GET"])
-def api_analytics():
-    with connect() as conn:
-        refresh_notifications(conn)
-        return jsonify(analytics_payload(conn, get_query_dict()))
-
-@app.route("/api/analytics/plots", methods=["GET"])
-def api_analytics_plots():
-    import json as _json
-    with connect() as conn:
-        # Load tables into pandas DataFrames
-        credentials_df = pd.read_sql_query("SELECT * FROM credentials", conn)
-        audit_df = pd.read_sql_query("SELECT * FROM audit_logs", conn)
-        rotation_df = pd.read_sql_query("SELECT * FROM rotation_history", conn)
-        
-        plots = {}
-        
-        # 1. Credentials by Owner (role proxy)
-        try:
-            col = "role" if "role" in credentials_df.columns else "owner"
-            role_counts = credentials_df[col].value_counts().reset_index()
-            role_counts.columns = [col, "count"]
-            role_counts = role_counts.sort_values(by="count", ascending=False)
-            fig1 = px.bar(role_counts, x="count", y=col, orientation='h', color=col)
-            fig1.update_layout(margin=dict(l=20, r=20, t=20, b=20), yaxis=dict(categoryorder='total ascending'))
-            plots["credentials_by_role"] = fig1.to_json()
-        except Exception:
-            pass
-        
-        # 2. Credential Distribution by Department/Database
-        try:
-            col = "department" if "department" in credentials_df.columns else "database_name"
-            department_counts = credentials_df[col].value_counts().reset_index()
-            department_counts.columns = [col, "credential_count"]
-            department_counts = department_counts.sort_values(by="credential_count", ascending=False)
-            fig2 = px.pie(department_counts, names=col, values="credential_count")
-            fig2.update_traces(direction='clockwise')
-            fig2.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-            plots["credentials_by_department"] = fig2.to_json()
-        except Exception:
-            pass
-        
-        # 3. Credential Expiry Timeline
-        try:
-            if "expiry_date" in credentials_df.columns:
-                credentials_df["expiry_date"] = pd.to_datetime(credentials_df["expiry_date"], format='ISO8601', utc=True, errors='coerce')
-                expiry_counts = credentials_df["expiry_date"].dropna().dt.date.value_counts().reset_index()
-                expiry_counts.columns = ["expiry_date", "credential_count"]
-                expiry_counts = expiry_counts.sort_values(by="expiry_date", ascending=True)
-                fig3 = px.line(expiry_counts, x="expiry_date", y="credential_count", markers=True)
-                fig3.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-                plots["expiry_timeline"] = fig3.to_json()
-        except Exception:
-            pass
-        
-        # 4. Action Distribution
-        try:
-            if "action" in audit_df.columns:
-                actions_count = audit_df["action"].value_counts().reset_index()
-                actions_count.columns = ["Action", "Count"]
-                actions_count = actions_count.sort_values(by="Count", ascending=False)
-                fig4 = px.bar(actions_count, x="Action", y="Count")
-                fig4.update_layout(margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(categoryorder='total descending'))
-                plots["action_distribution"] = fig4.to_json()
-        except Exception:
-            pass
-        
-        # 5. Audit Activity Over Time
-        try:
-            if "created_at" in audit_df.columns:
-                audit_df["created_at"] = pd.to_datetime(audit_df["created_at"], format='ISO8601', utc=True, errors='coerce')
-                audit_df["date"] = audit_df["created_at"].dt.date
-                daily_activity = audit_df["date"].dropna().value_counts().reset_index()
-                daily_activity.columns = ["date", "event_count"]
-                daily_activity = daily_activity.sort_values(by="date", ascending=True)
-                fig5 = px.line(daily_activity, x="date", y="event_count", markers=True)
-                fig5.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-                plots["audit_activity"] = fig5.to_json()
-        except Exception:
-            pass
-        
-        # 6. Credential Rotation Status
-        try:
-            if "status" in rotation_df.columns:
-                status_counts = rotation_df["status"].value_counts().reset_index()
-                status_counts.columns = ["status", "count"]
-                status_counts = status_counts.sort_values(by="count", ascending=False)
-                fig6 = px.bar(status_counts, x="status", y="count")
-                fig6.update_layout(margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(categoryorder='total descending'))
-                plots["rotation_status"] = fig6.to_json()
-        except Exception:
-            pass
-        
-        # 7. Verification status distribution
-        try:
-            if "verification_status" in rotation_df.columns:
-                verification_status_counts = rotation_df["verification_status"].value_counts().reset_index()
-                verification_status_counts.columns = ["verification_status", "counts"]
-                verification_status_counts = verification_status_counts.sort_values(by="counts", ascending=False)
-                fig7 = px.pie(verification_status_counts, names="verification_status", values="counts")
-                fig7.update_traces(direction='clockwise')
-                fig7.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-                plots["verification_status"] = fig7.to_json()
-        except Exception:
-            pass
-        
-        # 8. Rotation Status vs Verification Status
-        try:
-            if "status" in rotation_df.columns and "verification_status" in rotation_df.columns:
-                grouped = rotation_df.groupby(["status", "verification_status"]).size().reset_index(name="count")
-                grouped = grouped.sort_values(by="count", ascending=False)
-                fig8 = px.bar(grouped, x="status", y="count", color="verification_status", barmode="group")
-                fig8.update_layout(margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(categoryorder='total descending'))
-                plots["rotation_vs_verification"] = fig8.to_json()
-        except Exception:
-            pass
-        
-        # Parse strings back into dictionaries so jsonify doesn't double-escape them
-        for k in list(plots.keys()):
-            try:
-                plots[k] = _json.loads(plots[k])
-            except Exception:
-                del plots[k]
-            
-        return jsonify(plots)
-
-@app.route("/api/credentials/<int:credential_id>/test-alert", methods=["POST"])
-def api_test_alert(credential_id):
+    deny = require_admin()
+    if deny:
+        return deny
     try:
-        with connect() as conn:
-            cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
-            if not cred:
-                return jsonify({"error": "Not found"}), 404
-            
-            # create a dummy notification for testing
-            message = f"Hi {cred['owner']},\n\n[TEST] Warning! Your {cred['database_name']} password expires soon."
-            conn.execute(
-                """
-                INSERT INTO notifications(credential_id, recipients, message, channel, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (credential_id, cred["owner"], message, "Email Reminder", "Sent", iso_now()),
-            )
-        return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+        with db_connection() as conn:
+            refresh_notifications(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM credentials ORDER BY expiry_date ASC")
+                creds = cur.fetchall()
+            out = []
+            for c in creds:
+                scored = score_credential(c, conn)
+                item = {k: c[k] for k in c if k not in ("password_hash", "password_salt")}
+                item.update(scored)
+                rec = recommend_action(scored["days_to_expiry"], scored["risk_level"])
+                item.update(rec)
+                # Aliases expected by public/app.js
+                item["risk"] = scored["risk_level"]
+                item["risk_factors"] = scored.get("factors") or []
+                item["recommendation"] = rec
+                # Approximate credential age from created_at when available
+                created = c.get("created_at")
+                age = None
+                if created:
+                    try:
+                        if isinstance(created, str):
+                            created_dt = datetime.fromisoformat(created.replace(" ", "T"))
+                        else:
+                            created_dt = created
+                        age = max(0, (datetime.now() - created_dt).days)
+                    except Exception:
+                        age = None
+                item["credential_age"] = age if age is not None else "—"
+                item["secret_ref"] = item.get("secret_ref", "")
+                out.append(item)
+            # Optional filters
+            risk = request.args.get("risk")
+            if risk and risk != "All":
+                out = [x for x in out if x.get("risk_level") == risk]
+            q = (request.args.get("q") or "").lower()
+            if q:
+                out = [x for x in out if q in str(x.get("database_name", "")).lower()
+                       or q in str(x.get("username", "")).lower()
+                       or q in str(x.get("owner", "")).lower()]
+            return jsonify(out)
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
-@app.route("/api/rotate", methods=["POST"])
-def api_rotate():
-    payload = request.json or {}
-    try:
-        with connect() as conn:
-            result = rotate_credential(conn, int(payload["credential_id"]), payload.get("approved_by", "demo-admin"))
-        return jsonify(result)
-    except PermissionError as exc:
-        return jsonify({"error": str(exc)}), 403
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
 
 @app.route("/api/credentials", methods=["POST"])
 def api_credentials_create():
+    deny = require_admin()
+    if deny:
+        return deny
     payload = request.json or {}
+    required = ["database_name", "username", "owner", "expiry_date"]
+    for k in required:
+        if not str(payload.get(k, "")).strip():
+            return jsonify({"error": f"{k} is required"}), 400
+    salt = secrets.token_hex(16)
+    # Client may send a password for initial hash; never store plaintext
+    raw = payload.get("password") or generate_password()
+    if len(raw) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    ref = f"vault://securerotate/{payload['database_name'].lower()}/{payload['username']}"
     try:
-        with connect() as conn:
-            result = create_user_credential(conn, payload)
-        return jsonify(result), 201
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+        rid = execute(
+            """INSERT INTO credentials
+               (database_name, username, owner, expiry_date, status, secret_ref,
+                password_hash, password_salt, created_at, uses_mfa, is_privileged, is_production)
+               VALUES (%s,%s,%s,%s,'Active',%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                payload["database_name"].strip(),
+                payload["username"].strip(),
+                payload["owner"].strip(),
+                payload["expiry_date"][:10],
+                ref,
+                hash_secret(raw, salt),
+                salt,
+                iso_now(),
+                int(payload.get("uses_mfa") or 0),
+                int(payload.get("is_privileged") or 0),
+                int(payload.get("is_production") or 0),
+            ),
+            fetch="lastrowid",
+        )
+        execute(
+            """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+               VALUES (%s,'create_credential','credential',%s,%s,%s)""",
+            (session.get("email") or "admin", rid, f"Created {payload['database_name']}/{payload['username']}", iso_now()),
+        )
+        return jsonify({"ok": True, "id": rid})
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
-@app.route("/api/credentials/<int:credential_id>/remind", methods=["POST"])
-def api_credentials_remind(credential_id):
-    payload = request.json or {}
+
+@app.route("/api/recommendations", methods=["GET"])
+def api_recommendations():
+    deny = require_admin()
+    if deny:
+        return deny
     try:
-        with connect() as conn:
-            credential = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
-            if not credential:
-                return jsonify({"error": "Not found"}), 404
-                
-            actor = payload.get("actor", "demo-admin")
-            
-            days = credential["days_to_expiry"]
-            if days <= 0:
-                level = 'Expired'
-                message = f"Hi {credential['owner']},\n\nYour {credential['database_name']} database password has EXPIRED. Access is locked."
-            elif days == 1:
-                level = 'Critical Warning'
-                message = f"Hi {credential['owner']},\n\nCritical Warning! Your {credential['database_name']} password expires in {days} day. Please rotate immediately."
-            elif days <= 3:
-                level = 'Urgent Warning'
-                message = f"Hi {credential['owner']},\n\nUrgent Warning! Your {credential['database_name']} password expires in {days} days. Please rotate."
-            else:
-                level = 'Warning'
-                message = f"Hi {credential['owner']},\n\nWarning! Your {credential['database_name']} password expires in {days} days."
-            
-            # Insert a notification so it shows on the Notifications tab too
-            conn.execute(
-                """
-                INSERT INTO notifications(credential_id, recipients, message, channel, status, created_at)
-                VALUES (?, ?, ?, 'Email Reminder', 'Sent', ?)
-                """,
-                (credential_id, f"{credential['owner']} ({credential['username']})", message, iso_now()),
-            )
-            
-            conn.execute(
-                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (actor, "send_manual_reminder", "credential", credential_id, message, iso_now()),
-            )
-            
-            # Actually dispatch the email!
-            to_email = get_recipient_email(credential)
-            if to_email:
-                subject = f"[{level}] SecureRotate: {credential['database_name']} Password Expiry"
-                send_real_email(to_email, subject, message)
-                
-        return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM credentials")
+                creds = cur.fetchall()
+            out = []
+            for c in creds:
+                scored = score_credential(c, conn)
+                rec = recommend_action(scored["days_to_expiry"], scored["risk_level"])
+                factors = scored["factors"][:5]
+                out.append({
+                    "id": c["id"],
+                    "database_name": c["database_name"],
+                    "username": c["username"],
+                    "owner": c["owner"],
+                    "risk": scored["risk_level"],
+                    "risk_level": scored["risk_level"],
+                    "risk_score": scored["risk_score"],
+                    "risk_probability": scored["risk_probability"],
+                    "days_to_expiry": scored["days_to_expiry"],
+                    "factors": factors,
+                    "top_factors": factors,
+                    "risk_factors": factors,
+                    "recommendation": rec,
+                    **rec,
+                })
+            out.sort(key=lambda x: -risk_rank(x["risk_level"]))
+            return jsonify(out)
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
-@app.route("/api/credentials/<int:credential_id>/expiry", methods=["PUT"])
-def api_credentials_expiry(credential_id):
-    payload = request.json or {}
+
+@app.route("/api/notifications", methods=["GET"])
+def api_notifications():
+    deny = require_admin()
+    if deny:
+        return deny
     try:
-        new_days = int(payload.get("days", 0))
-        actor = payload.get("actor", "demo-admin")
-        
-        from datetime import datetime, timedelta
-        new_expiry_date = (datetime.now() + timedelta(days=new_days)).strftime("%Y-%m-%d")
-
-        with connect() as conn:
-            # Update expiry date globally
-            conn.execute(
-                "UPDATE credentials SET expiry_date = ? WHERE id = ?",
-                (new_expiry_date, credential_id)
-            )
-            # Log the action
-            conn.execute(
-                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (actor, "update_expiry", "credential", credential_id, f"Admin updated expiry to {new_days} days.", iso_now()),
-            )
-            # Smart Resolution: if they push the expiry out safely, resolve active notifications!
-            if new_days > 7:
-                conn.execute(
-                    "UPDATE notifications SET status = 'Resolved' WHERE credential_id = ? AND status != 'Resolved'",
-                    (credential_id,)
+        with db_connection() as conn:
+            refresh_notifications(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT n.*, c.database_name, c.username, c.owner, c.expiry_date
+                       FROM notifications n
+                       JOIN credentials c ON c.id = n.credential_id
+                       ORDER BY n.id DESC LIMIT 200"""
                 )
-                
-            # Re-run notification engine to adjust to the new reality
-            refresh_notifications(conn)
+                rows = cur.fetchall()
+            out = []
+            for row in rows:
+                item = dict(row)
+                exp = item.get("expiry_date")
+                if isinstance(exp, str):
+                    try:
+                        exp = date.fromisoformat(exp[:10])
+                    except Exception:
+                        exp = None
+                days = (exp - today()).days if exp else None
+                item["days_to_expiry"] = days
+                # Aliases expected by the dashboard
+                item["notification_id"] = item.get("id")
+                item["notification_status"] = item.get("status")
+                out.append(item)
+            return jsonify(out)
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
+
+@app.route("/api/notifications/<int:nid>/ack", methods=["POST"])
+def api_notif_ack(nid):
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        execute(
+            "UPDATE notifications SET status='Acknowledged', acknowledged_at=%s WHERE id=%s",
+            (iso_now(), nid),
+        )
+        execute(
+            """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+               VALUES (%s,'acknowledge_notification','notification',%s,%s,%s)""",
+            (session.get("email") or "admin", nid, "Notification acknowledged", iso_now()),
+        )
         return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
-@app.route("/api/notifications/<int:notification_id>/ack", methods=["POST"])
-def api_notifications_ack(notification_id):
+
+@app.route("/api/audit", methods=["GET"])
+def api_audit():
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        rows = execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200", fetch="all")
+        return jsonify(rows or [])
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/analytics", methods=["GET"])
+def api_analytics():
+    """Simple analytics for the dashboard bar charts (no Plotly dependency)."""
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM credentials")
+                creds = cur.fetchall()
+            by_engine: dict[str, int] = {}
+            by_risk: dict[str, int] = {}
+            expiry_buckets = {"Expired": 0, "0-7 days": 0, "8-15 days": 0, "16-30 days": 0, "31+ days": 0}
+            factor_counts: dict[str, int] = {}
+            for c in creds:
+                eng = c.get("database_name") or "Unknown"
+                by_engine[eng] = by_engine.get(eng, 0) + 1
+                scored = score_credential(c, conn)
+                level = scored["risk_level"]
+                by_risk[level] = by_risk.get(level, 0) + 1
+                days = scored["days_to_expiry"]
+                if days < 0:
+                    expiry_buckets["Expired"] += 1
+                elif days <= 7:
+                    expiry_buckets["0-7 days"] += 1
+                elif days <= 15:
+                    expiry_buckets["8-15 days"] += 1
+                elif days <= 30:
+                    expiry_buckets["16-30 days"] += 1
+                else:
+                    expiry_buckets["31+ days"] += 1
+                for f in scored.get("factors") or []:
+                    label = f.get("label") or "Other"
+                    factor_counts[label] = factor_counts.get(label, 0) + 1
+            # Top factors as list of {label, value} for the bar renderer
+            top_factors = sorted(
+                [{"label": k, "value": v} for k, v in factor_counts.items()],
+                key=lambda x: -x["value"],
+            )[:8]
+            return jsonify({
+                "by_engine": by_engine,
+                "by_risk": by_risk,
+                "expiry_buckets": [{"label": k, "value": v} for k, v in expiry_buckets.items()],
+                "top_factors": top_factors,
+                "model_version": model_version(),
+                "total": len(creds),
+            })
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/rotate", methods=["POST"])
+def api_rotate():
+    deny = require_admin()
+    if deny:
+        return deny
     payload = request.json or {}
+    cid = payload.get("credential_id")
+    if not cid:
+        return jsonify({"error": "credential_id required"}), 400
+    actor = session.get("email") or payload.get("approved_by") or "admin"
     try:
-        with connect() as conn:
-            conn.execute(
-                "UPDATE notifications SET status = 'Acknowledged', acknowledged_at = ? WHERE id = ?",
-                (iso_now(), notification_id),
-            )
-            conn.execute(
-                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (payload.get("actor", "demo-admin"), "acknowledge_notification", "notification", notification_id, "Stakeholder acknowledged expiry alert.", iso_now()),
-            )
-        return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM credentials WHERE id = %s", (cid,))
+                cred = cur.fetchone()
+                if not cred:
+                    return jsonify({"error": "Credential not found"}), 404
+                # Simulated controlled rotation — never returns plaintext
+                new_secret = generate_password()
+                salt = secrets.token_hex(16)
+                new_hash = hash_secret(new_secret, salt)
+                new_expiry = (today() + timedelta(days=90)).isoformat()
+                started = iso_now()
+                cur.execute(
+                    """UPDATE credentials
+                       SET password_hash=%s, password_salt=%s, expiry_date=%s,
+                           last_rotated_at=%s, status='Active', updated_at=%s
+                       WHERE id=%s""",
+                    (new_hash, salt, new_expiry, started, started, cid),
+                )
+                cur.execute(
+                    """INSERT INTO rotation_history
+                       (credential_id, requested_by, status, started_at, completed_at, verification_status, details)
+                       VALUES (%s,%s,'Completed',%s,%s,'Verified',%s)""",
+                    (cid, actor, started, iso_now(),
+                     "Simulated rotation: new secret hashed (PBKDF2), vault ref retained, connectivity verified."),
+                )
+                cur.execute(
+                    """UPDATE notifications SET status='Resolved'
+                       WHERE credential_id=%s AND status IN ('Sent','Reminded','Escalated')""",
+                    (cid,),
+                )
+                scored = score_credential({**cred, "expiry_date": new_expiry, "password_hash": new_hash, "password_salt": salt}, conn)
+                cur.execute(
+                    """INSERT INTO audit_logs (actor, action, entity, entity_id, details, risk_score, created_at)
+                       VALUES (%s,'rotate_credential','credential',%s,%s,%s,%s)""",
+                    (actor, cid, f"Rotated {cred['database_name']}/{cred['username']}; new expiry {new_expiry}",
+                     scored["risk_probability"], iso_now()),
+                )
+            conn.commit()
+            # new_secret intentionally discarded — not returned
+            return jsonify({
+                "ok": True,
+                "credential_id": cid,
+                "new_expiry": new_expiry,
+                "verification_status": "Verified",
+                "note": "Rotation simulated; plaintext secret is not returned or logged.",
+            })
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
-@app.route("/api/notifications/<int:notification_id>/remind", methods=["POST"])
-def api_notifications_remind(notification_id):
-    payload = request.json or {}
-    try:
-        with connect() as conn:
-            noti = conn.execute("SELECT * FROM notifications WHERE id = ?", (notification_id,)).fetchone()
-            if not noti:
-                return jsonify({"error": "Not found"}), 404
-            
-            cred_row = conn.execute("SELECT * FROM credentials WHERE id = ?", (noti["credential_id"],)).fetchone()
-            cred = row_to_dict(cred_row)
-            
-            # Generate a one-time magic link token
-            token = secrets.token_urlsafe(32)
-            conn.execute(
-                "INSERT INTO reset_tokens(token, credential_id, created_at) VALUES (?, ?, ?)",
-                (token, cred["id"], iso_now()),
-            )
-            
-            # Prepare mailto payload with magic link
-            to_email = get_recipient_email(cred) or ""
-            subject = f"[{noti['channel']}] SecureRotate: {cred['database_name']} Reminder"
-            base_message = noti["message"]
-            # Use public tunnel URL if available, otherwise fall back to local
-            public_base = os.environ.get("PUBLIC_URL", request.host_url).rstrip("/")
-            reset_url = f"{public_base}/reset/{token}"
-            message = f"{base_message}\n\n🔐 Reset your password securely:\n{reset_url}"
-                
-            conn.execute(
-                "UPDATE notifications SET status = 'Reminded' WHERE id = ?",
-                (notification_id,),
-            )
-            conn.execute(
-                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (payload.get("actor", "demo-admin"), "send_manual_reminder", "notification", notification_id, "Admin manually pushed a reminder email with magic reset link.", iso_now()),
-            )
-        return jsonify({
-            "ok": True,
-            "mailto": {
-                "to": to_email,
-                "subject": subject,
-                "body": message
-            }
-        })
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
 
-@app.route("/api/notifications/<int:notification_id>/undo", methods=["POST"])
-def api_notifications_undo(notification_id):
-    try:
-        with connect() as conn:
-            conn.execute("UPDATE notifications SET status = 'Sent' WHERE id = ?", (notification_id,))
-            conn.execute(
-                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                ("demo-admin", "undo_notification", "notification", notification_id, "Admin reverted notification status to Sent.", iso_now()),
-            )
-        return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
 
-def is_token_expired(created_at_str):
-    created = datetime.fromisoformat(created_at_str)
-    return (datetime.now() - created).total_seconds() > TOKEN_EXPIRY_MINUTES * 60
 
-def send_otp_email(to_email, otp_code, db_name):
-    """Send OTP code via real Gmail SMTP."""
-    subject = f"[SecureRotate] Your verification code: {otp_code}"
-    body = (
-        f"Your SecureRotate one-time verification code is:\n\n"
-        f"    {otp_code}\n\n"
-        f"This code is for resetting your {db_name} database password.\n"
-        f"It expires in {TOKEN_EXPIRY_MINUTES} minutes. Do not share this code.\n\n"
-        f"If you did not request this, please ignore this email."
-    )
-    msg = EmailMessage()
-    msg.set_content(body)
-    msg["Subject"] = subject
-    msg["From"] = f"SecureRotate <{SMTP_EMAIL}>"
-    msg["To"] = to_email
-    try:
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"\n{'='*50}")
-        print(f"  OTP SENT to {to_email}: {otp_code}")
-        print(f"{'='*50}\n")
-        return True
-    except Exception as e:
-        print(f"Failed to send OTP email: {e}")
-        return False
-
-@app.route("/reset/<token>")
-def serve_reset_page(token):
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM reset_tokens WHERE token = ?", (token,)).fetchone()
-        if not row:
-            return "<h1>Link Expired</h1><p>This reset link has already been used or is invalid.</p>", 404
-        if is_token_expired(row["created_at"]):
-            conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
-            return "<h1>Link Expired</h1><p>This reset link has expired. Please request a new one from your admin.</p>", 410
-    return send_file(PUBLIC / "reset.html")
-
-@app.route("/api/reset/<token>", methods=["GET"])
-def api_reset_info(token):
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM reset_tokens WHERE token = ?", (token,)).fetchone()
-        if not row:
-            return jsonify({"error": "This reset link has already been used or is invalid."}), 404
-        if is_token_expired(row["created_at"]):
-            conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
-            return jsonify({"error": "This reset link has expired. Please request a new one."}), 410
-        cred = conn.execute("SELECT id, database_name, username, owner FROM credentials WHERE id = ?", (row["credential_id"],)).fetchone()
-        return jsonify({
-            "database_name": cred["database_name"],
-            "username": cred["username"],
-            "owner": cred["owner"],
-            "otp_verified": bool(row["otp_verified"]),
-        })
-
-@app.route("/api/reset/<token>/send-otp", methods=["POST"])
-def api_send_otp(token):
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM reset_tokens WHERE token = ?", (token,)).fetchone()
-        if not row:
-            return jsonify({"error": "Invalid link."}), 404
-        if is_token_expired(row["created_at"]):
-            conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
-            return jsonify({"error": "This link has expired."}), 410
-        cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (row["credential_id"],)).fetchone()
-        to_email = get_recipient_email(row_to_dict(cred))
-        if not to_email:
-            return jsonify({"error": "No email found for this credential."}), 400
-        
-        # Generate 6-digit OTP
-        otp_code = str(random.randint(100000, 999999))
-        conn.execute("UPDATE reset_tokens SET otp_code = ?, otp_verified = 0 WHERE token = ?", (otp_code, token))
-        
-        # Send real email
-        sent = send_otp_email(to_email, otp_code, cred["database_name"])
-        
-        return jsonify({"ok": True, "sent": sent, "email_hint": to_email[:3] + "***" + to_email[to_email.index("@"):]}) 
-
-@app.route("/api/reset/<token>/verify-otp", methods=["POST"])
-def api_verify_otp(token):
-    payload = request.json or {}
-    submitted_code = str(payload.get("otp", "")).strip()
-    if not submitted_code:
-        return jsonify({"error": "Please enter the verification code."}), 400
-    with connect() as conn:
-        row = conn.execute("SELECT * FROM reset_tokens WHERE token = ?", (token,)).fetchone()
-        if not row:
-            return jsonify({"error": "Invalid link."}), 404
-        if is_token_expired(row["created_at"]):
-            conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
-            return jsonify({"error": "This link has expired."}), 410
-        if not row["otp_code"]:
-            return jsonify({"error": "Please request an OTP first."}), 400
-        if submitted_code != row["otp_code"]:
-            return jsonify({"error": "Invalid code. Please try again."}), 400
-        
-        conn.execute("UPDATE reset_tokens SET otp_verified = 1 WHERE token = ?", (token,))
-        return jsonify({"ok": True})
-
-@app.route("/api/reset/<token>", methods=["POST"])
-def api_reset_password(token):
-    payload = request.json or {}
-    new_password = payload.get("password", "").strip()
-    if not new_password or len(new_password) < 8:
-        return jsonify({"error": "Password must be at least 8 characters."}), 400
-    try:
-        with connect() as conn:
-            row = conn.execute("SELECT * FROM reset_tokens WHERE token = ?", (token,)).fetchone()
-            if not row:
-                return jsonify({"error": "This reset link has already been used or is invalid."}), 404
-            if is_token_expired(row["created_at"]):
-                conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
-                return jsonify({"error": "This link has expired."}), 410
-            if not row["otp_verified"]:
-                return jsonify({"error": "OTP verification required before resetting password."}), 403
-            
-            credential_id = row["credential_id"]
-            cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
-            
-            # Hash the new password
-            new_salt = secrets.token_hex(16)
-            new_hash = hash_secret(new_password, new_salt)
-            new_expiry = (today() + timedelta(days=90)).isoformat()
-            
-            # Update the credential
-            conn.execute(
-                "UPDATE credentials SET password_hash = ?, password_salt = ?, expiry_date = ?, last_rotated_at = ?, status = 'Active' WHERE id = ?",
-                (new_hash, new_salt, new_expiry, today().isoformat(), credential_id),
-            )
-            
-            # Delete the one-time token
-            conn.execute("DELETE FROM reset_tokens WHERE token = ?", (token,))
-            
-            # Resolve all active notifications for this credential
-            conn.execute(
-                "UPDATE notifications SET status = 'Resolved' WHERE credential_id = ? AND status IN ('Sent', 'Reminded', 'Escalated')",
-                (credential_id,),
-            )
-            
-            # Log the rotation
-            conn.execute(
-                "INSERT INTO rotation_history(credential_id, requested_by, status, started_at, completed_at, verification_status, details) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (credential_id, cred["owner"], "Completed", iso_now(), iso_now(), "Verified", "Password reset via secure magic link."),
-            )
-            conn.execute(
-                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (cred["owner"], "password_reset_via_magic_link", "credential", credential_id, f"User reset password for {cred['database_name']}/{cred['username']} via magic link. New expiry: {new_expiry}.", iso_now()),
-            )
-            
-            # Refresh notifications so dashboard is up to date
-            refresh_notifications(conn)
-            
-        return jsonify({"ok": True, "new_expiry": new_expiry})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+# ---------------------------------------------------------------------------
+# Additional dashboard APIs (compat with frontend)
+# ---------------------------------------------------------------------------
 
 @app.route("/api/demo/reset", methods=["POST"])
 def api_demo_reset():
+    deny = require_admin()
+    if deny:
+        return deny
     try:
-        with connect() as conn:
-            conn.executescript(
-                """
-                DROP TABLE IF EXISTS reset_tokens;
-                DROP TABLE IF EXISTS notifications;
-                DROP TABLE IF EXISTS rotation_history;
-                DROP TABLE IF EXISTS audit_logs;
-                DROP TABLE IF EXISTS credentials;
-                """
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                for table in ("ml_predictions", "reset_tokens", "notifications",
+                              "rotation_history", "audit_logs", "credentials"):
+                    cur.execute(f"DELETE FROM {table}")
+            conn.commit()
+            seed_if_empty(conn)
+            refresh_notifications(conn)
+            execute(
+                """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+                   VALUES (%s,'demo_reset','system',0,%s,%s)""",
+                (session.get("email") or "admin", "Demo data reset", iso_now()),
             )
-        init_db()
         return jsonify({"ok": True})
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 400
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
 
-def run(host: str = "127.0.0.1", port: int = 8000) -> None:
-    init_db()
-    print(f"SecureRotate running at http://{host}:{port}")
-    
-    # If TUNNEL mode is enabled, start a Cloudflare tunnel for public access
-    if os.environ.get("TUNNEL") == "1":
+
+@app.route("/api/credentials/<int:cid>/test-alert", methods=["POST"])
+def api_test_alert(cid):
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM credentials WHERE id=%s", (cid,))
+                cred = cur.fetchone()
+                if not cred:
+                    return jsonify({"error": "Not found"}), 404
+                msg = f"[TEST] Warning for {cred['database_name']}/{cred['username']}"
+                cur.execute(
+                    """INSERT INTO notifications
+                       (credential_id, recipients, channel, message, status, threshold_days, created_at)
+                       VALUES (%s,%s,'email',%s,'Sent',NULL,%s)""",
+                    (cid, cred["owner"], msg, iso_now()),
+                )
+                cur.execute(
+                    """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+                       VALUES (%s,'test_alert','credential',%s,%s,%s)""",
+                    (session.get("email") or "admin", cid, "Test alert sent", iso_now()),
+                )
+            conn.commit()
+        return jsonify({"ok": True})
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/credentials/<int:cid>/expiry", methods=["POST"])
+def api_set_expiry(cid):
+    deny = require_admin()
+    if deny:
+        return deny
+    payload = request.json or {}
+    exp = str(payload.get("expiry_date") or "")[:10]
+    if not exp:
+        return jsonify({"error": "expiry_date required"}), 400
+    try:
+        execute(
+            "UPDATE credentials SET expiry_date=%s, updated_at=%s WHERE id=%s",
+            (exp, iso_now(), cid),
+        )
+        execute(
+            """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+               VALUES (%s,'update_expiry','credential',%s,%s,%s)""",
+            (session.get("email") or "admin", cid, f"Expiry set to {exp}", iso_now()),
+        )
+        return jsonify({"ok": True, "expiry_date": exp})
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/notifications/<int:nid>/remind", methods=["POST"])
+def api_notif_remind(nid):
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM notifications WHERE id=%s", (nid,))
+                noti = cur.fetchone()
+                if not noti:
+                    return jsonify({"error": "Not found"}), 404
+                cur.execute("SELECT * FROM credentials WHERE id=%s", (noti["credential_id"],))
+                cred = cur.fetchone()
+                if not cred:
+                    return jsonify({"error": "Credential missing"}), 404
+                # Create single-use reset token
+                token = secrets.token_urlsafe(32)
+                expires = (datetime.now() + timedelta(minutes=TOKEN_EXPIRY_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+                cur.execute(
+                    """INSERT INTO reset_tokens (token, credential_id, created_at, expires_at, used, otp_verified)
+                       VALUES (%s,%s,%s,%s,0,0)""",
+                    (token, cred["id"], iso_now(), expires),
+                )
+                cur.execute("UPDATE notifications SET status='Reminded' WHERE id=%s", (nid,))
+                cur.execute(
+                    """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+                       VALUES (%s,'send_reminder','notification',%s,%s,%s)""",
+                    (session.get("email") or "admin", nid, "Manual reminder with reset token issued", iso_now()),
+                )
+            conn.commit()
+        public_base = request.host_url.rstrip("/")
+        reset_url = f"{public_base}/reset.html?token={token}"
+        # Do not log token
+        logger.info("Reminder issued for notification=%s credential=%s", nid, cred["id"])
+        return jsonify({"ok": True, "reset_url": reset_url})
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/notifications/<int:nid>/undo", methods=["POST"])
+def api_notif_undo(nid):
+    deny = require_admin()
+    if deny:
+        return deny
+    try:
+        execute(
+            "UPDATE notifications SET status='Sent', acknowledged_at=NULL WHERE id=%s",
+            (nid,),
+        )
+        return jsonify({"ok": True})
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+# ---------------------------------------------------------------------------
+# Secure OTP / magic-link password reset (managed credential rotation by owner)
+# ---------------------------------------------------------------------------
+
+def _get_valid_token(token: str):
+    row = execute(
+        "SELECT * FROM reset_tokens WHERE token=%s",
+        (token,),
+        fetch="one",
+    )
+    if not row:
+        return None, "Invalid or unknown token"
+    if row.get("used"):
+        return None, "Token already used"
+    exp = row.get("expires_at")
+    if exp:
+        if isinstance(exp, str):
+            exp = datetime.fromisoformat(exp.replace(" ", "T"))
+        if datetime.now() > exp:
+            return None, "Token expired"
+    return row, None
+
+
+@app.route("/api/reset/<token>", methods=["GET"])
+def api_reset_get(token):
+    """Validate token and return non-sensitive credential context."""
+    row, err = _get_valid_token(token)
+    if err:
+        return jsonify({"error": err}), 400
+    cred = execute(
+        "SELECT id, database_name, username, owner, expiry_date FROM credentials WHERE id=%s",
+        (row["credential_id"],),
+        fetch="one",
+    )
+    if not cred:
+        return jsonify({"error": "Credential not found"}), 404
+    return jsonify({
+        "ok": True,
+        "otp_verified": bool(row.get("otp_verified")),
+        "database_name": cred["database_name"],
+        "username": cred["username"],
+        "owner": cred["owner"],
+    })
+
+
+@app.route("/api/reset/<token>/send-otp", methods=["POST"])
+def api_reset_send_otp(token):
+    row, err = _get_valid_token(token)
+    if err:
+        return jsonify({"error": err}), 400
+    # Generate 6-digit OTP, store HASH only
+    otp_plain = f"{secrets.randbelow(1000000):06d}"
+    otp_hash = generate_password_hash(otp_plain)
+    execute(
+        "UPDATE reset_tokens SET otp_code_hash=%s, otp_attempts=0, otp_verified=0 WHERE token=%s",
+        (otp_hash, token),
+    )
+    # In production send email; for demo log only a redacted notice (never log OTP)
+    logger.info("OTP generated for token prefix=%s... (not logged)", token[:6])
+    # Optional real email if SMTP configured
+    cred = execute(
+        "SELECT owner, username, database_name FROM credentials WHERE id=%s",
+        (row["credential_id"],),
+        fetch="one",
+    )
+    to_email = extract_email(cred["owner"] if cred else "") or extract_email(cred["username"] if cred else "")
+    if to_email and SMTP_EMAIL and SMTP_APP_PASSWORD:
         try:
-            from flask_cloudflared import run_with_cloudflared
-            run_with_cloudflared(app)
-            print("Cloudflare Tunnel starting... Public URL will appear below.")
-        except Exception as e:
-            print(f"Could not start tunnel: {e}")
-    
-    app.run(host=host, port=port, debug=True, use_reloader=False)
+            import smtplib
+            from email.message import EmailMessage
+            msg = EmailMessage()
+            msg["Subject"] = "SecureRotate verification code"
+            msg["From"] = SMTP_EMAIL
+            msg["To"] = to_email
+            msg.set_content(f"Your SecureRotate verification code is: {otp_plain}\nIt expires in {TOKEN_EXPIRY_MINUTES} minutes.")
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+                s.starttls()
+                s.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
+                s.send_message(msg)
+            logger.info("OTP email sent to %s", to_email)
+        except Exception as exc:
+            logger.warning("OTP email failed: %s", exc)
+    # For local demo without SMTP, return otp ONLY in debug mode
+    resp = {"ok": True, "message": "If email is configured, a code was sent."}
+    if DEBUG:
+        resp["debug_otp"] = otp_plain
+    return jsonify(resp)
+
+
+@app.route("/api/reset/<token>/verify-otp", methods=["POST"])
+def api_reset_verify_otp(token):
+    row, err = _get_valid_token(token)
+    if err:
+        return jsonify({"error": err}), 400
+    if int(row.get("otp_attempts") or 0) >= OTP_MAX_ATTEMPTS:
+        return jsonify({"error": "Too many attempts. Request a new code."}), 429
+    payload = request.json or {}
+    code = str(payload.get("otp") or "").strip()
+    if not code:
+        return jsonify({"error": "OTP required"}), 400
+    stored_hash = row.get("otp_code_hash")
+    if not stored_hash or not check_password_hash(stored_hash, code):
+        execute(
+            "UPDATE reset_tokens SET otp_attempts=otp_attempts+1 WHERE token=%s",
+            (token,),
+        )
+        return jsonify({"error": "Invalid code"}), 400
+    execute(
+        "UPDATE reset_tokens SET otp_verified=1, otp_attempts=0 WHERE token=%s",
+        (token,),
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/reset/<token>", methods=["POST"])
+def api_reset_password(token):
+    """After OTP verified, set a new managed credential secret (hashed) and extend expiry."""
+    row, err = _get_valid_token(token)
+    if err:
+        return jsonify({"error": err}), 400
+    if not row.get("otp_verified"):
+        return jsonify({"error": "OTP verification required"}), 403
+    payload = request.json or {}
+    new_password = str(payload.get("password") or "")
+    if len(new_password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    salt = secrets.token_hex(16)
+    new_hash = hash_secret(new_password, salt)
+    new_expiry = (today() + timedelta(days=90)).isoformat()
+    try:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE credentials
+                       SET password_hash=%s, password_salt=%s, expiry_date=%s,
+                           last_rotated_at=%s, status='Active', updated_at=%s
+                       WHERE id=%s""",
+                    (new_hash, salt, new_expiry, iso_now(), iso_now(), row["credential_id"]),
+                )
+                cur.execute(
+                    "UPDATE reset_tokens SET used=1 WHERE token=%s",
+                    (token,),
+                )
+                cur.execute(
+                    """UPDATE notifications SET status='Resolved'
+                       WHERE credential_id=%s AND status IN ('Sent','Reminded','Escalated')""",
+                    (row["credential_id"],),
+                )
+                cur.execute(
+                    """INSERT INTO rotation_history
+                       (credential_id, requested_by, status, started_at, completed_at, verification_status, details)
+                       VALUES (%s,%s,'Completed',%s,%s,'Verified',%s)""",
+                    (row["credential_id"], "owner-reset", iso_now(), iso_now(),
+                     "SIMULATED ROTATION via secure OTP reset; secret hashed, not logged."),
+                )
+                cur.execute(
+                    """INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at)
+                       VALUES (%s,'password_reset_otp','credential',%s,%s,%s)""",
+                    ("owner", row["credential_id"], f"OTP reset; new expiry {new_expiry}", iso_now()),
+                )
+            conn.commit()
+        return jsonify({"ok": True, "new_expiry": new_expiry})
+    except DatabaseError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    ok = ping()
+    return jsonify({
+        "status": "ok" if ok else "degraded",
+        "mysql": ok,
+        "model_version": model_version(),
+    }), 200 if ok else 503
+
+
+# ---------------------------------------------------------------------------
+# Startup
+# ---------------------------------------------------------------------------
+
+def bootstrap() -> None:
+    logger.info("Bootstrapping SecureRotate (MySQL-only)")
+    if not ping():
+        raise SystemExit(
+            "FATAL: MySQL is not reachable. Set MYSQL_HOST, MYSQL_PORT, MYSQL_USER, "
+            "MYSQL_PASSWORD, MYSQL_DATABASE and ensure the server is running. "
+            "SQLite is not supported."
+        )
+    init_schema()
+    with db_connection() as conn:
+        seed_if_empty(conn)
+        refresh_notifications(conn)
+    logger.info("Bootstrap complete. Model=%s", model_version())
+
 
 if __name__ == "__main__":
-    run(os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8000")))
+    try:
+        bootstrap()
+    except SystemExit as e:
+        print(e)
+        raise
+    except DatabaseError as e:
+        print(f"FATAL database error: {e}")
+        raise SystemExit(1)
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=DEBUG, use_reloader=False)
