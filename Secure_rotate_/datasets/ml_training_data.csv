@@ -1,0 +1,51 @@
+employee_name,email,department,role,database_name,days_to_expiry,total_rotations,successful_rotations,failed_rotations,reminders_ignored,avg_response_hours,login_frequency_per_week,password_strength_score,uses_mfa,breach_risk_score,caused_breach
+Sanjay Verma,sanjay.verma@techcorp.in,Infrastructure,SysAdmin,CockroachDB,12,2,1,1,0,27,15,7,0,0,0
+Priya Sharma,priya.sharma@techcorp.in,Engineering,Junior Developer,Redis,80,3,1,1,0,104,10,8,1,0,0
+Meera Joshi,meera.joshi@techcorp.in,Infrastructure,DBA,Oracle,5,3,3,0,3,40,25,3,0,5.33,0
+Priya Sharma,priya.sharma@techcorp.in,Engineering,Junior Developer,SQL Server,5,2,2,0,3,121,14,5,1,6.21,0
+Pooja Mishra,pooja.mishra@techcorp.in,Security,CISO,CockroachDB,100,3,2,1,2,23,19,5,1,0,0
+Sanjay Verma,sanjay.verma@techcorp.in,Infrastructure,SysAdmin,MySQL,6,1,1,0,4,22,7,3,1,13.58,0
+Rohit Kumar,rohit.kumar@techcorp.in,QA,QA Lead,Redis,2,3,3,0,4,48,16,4,0,16.0,0
+Rohit Kumar,rohit.kumar@techcorp.in,QA,QA Lead,MongoDB,110,2,2,0,0,19,23,3,0,0,0
+Kavita Rao,kavita.rao@techcorp.in,Engineering,Intern,MySQL,4,0,0,0,1,129,20,10,1,0,0
+Lakshmi Menon,lakshmi.menon@techcorp.in,Data Science,Senior Analyst,SQL Server,67,1,1,0,0,51,12,7,0,0,0
+Rohit Kumar,rohit.kumar@techcorp.in,QA,QA Lead,MySQL,-30,2,0,2,4,13,17,6,1,100,1
+Pooja Mishra,pooja.mishra@techcorp.in,Security,CISO,MariaDB,18,2,2,0,1,13,10,4,1,0,0
+Sanjay Verma,sanjay.verma@techcorp.in,Infrastructure,SysAdmin,MongoDB,55,2,2,0,2,47,4,8,1,0,0
+Lakshmi Menon,lakshmi.menon@techcorp.in,Data Science,Senior Analyst,Oracle,108,2,2,0,0,12,3,6,1,0,0
+Divya Saxena,divya.saxena@techcorp.in,HR,HR Manager,Redis,18,1,0,0,1,66,16,10,1,0,0
+Vikram Singh,vikram.singh@techcorp.in,Engineering,Tech Lead,PostgreSQL,-30,3,2,0,6,6,22,5,1,100,1
+Rohit Kumar,rohit.kumar@techcorp.in,QA,QA Lead,SQL Server,6,2,2,0,1,29,22,7,1,0,0
+Amit Tiwari,amit.tiwari@techcorp.in,Security,Security Analyst,SQL Server,6,2,2,0,3,17,8,5,1,0,0
+Neha Agarwal,neha.agarwal@techcorp.in,Infrastructure,Cloud Engineer,MariaDB,58,1,1,0,0,65,8,5,1,0,0
+Kavita Rao,kavita.rao@techcorp.in,Engineering,Intern,MariaDB,33,2,2,0,0,165,4,9,1,0,0
+Pooja Mishra,pooja.mishra@techcorp.in,Security,CISO,CockroachDB,53,2,2,0,2,9,9,5,1,0,0
+Amit Tiwari,amit.tiwari@techcorp.in,Security,Security Analyst,MongoDB,63,1,1,0,1,67,5,5,1,0,0
+Sneha Patel,sneha.patel@techcorp.in,Engineering,Backend Developer,Oracle,16,2,2,0,0,33,5,9,1,0,0
+Amit Tiwari,amit.tiwari@techcorp.in,Security,Security Analyst,MongoDB,12,5,4,1,2,34,19,3,1,0,0
+Manish Dubey,manish.dubey@techcorp.in,Engineering,Intern,Oracle,38,2,1,1,0,127,4,8,1,0,0
+Vikram Singh,vikram.singh@techcorp.in,Engineering,Tech Lead,MongoDB,79,0,0,0,1,23,15,9,0,0,0
+Neha Agarwal,neha.agarwal@techcorp.in,Infrastructure,Cloud Engineer,Redis,45,1,0,1,1,8,20,10,1,0,0
+Sanjay Verma,sanjay.verma@techcorp.in,Infrastructure,SysAdmin,SQL Server,19,1,0,1,2,41,3,6,1,9.54,0
+Rahul Gupta,rahul.gupta@techcorp.in,Engineering,DevOps Engineer,PostgreSQL,6,2,1,1,1,46,13,8,1,0,0
+Kavita Rao,kavita.rao@techcorp.in,Engineering,Intern,SQL Server,3,1,0,0,2,34,2,8,1,0,0
+Pooja Mishra,pooja.mishra@techcorp.in,Security,CISO,Redis,15,2,1,1,0,4,1,5,1,0,0
+Arjun Mehta,arjun.mehta@techcorp.in,Engineering,Senior Developer,MySQL,14,1,1,0,1,14,11,6,1,0,0
+Priya Sharma,priya.sharma@techcorp.in,Engineering,Junior Developer,MariaDB,101,1,1,0,2,101,6,8,0,11.04,0
+Priya Sharma,priya.sharma@techcorp.in,Engineering,Junior Developer,Oracle,102,2,1,1,2,34,8,9,1,0,0
+Lakshmi Menon,lakshmi.menon@techcorp.in,Data Science,Senior Analyst,MySQL,-20,4,2,2,4,21,8,5,1,100,1
+Ananya Reddy,ananya.reddy@techcorp.in,Data Science,Data Analyst,MongoDB,5,1,1,0,4,64,13,4,1,19.33,0
+Meera Joshi,meera.joshi@techcorp.in,Infrastructure,DBA,SQL Server,73,1,1,0,2,6,24,7,1,0,0
+Deepika Iyer,deepika.iyer@techcorp.in,QA,QA Engineer,MySQL,2,4,3,1,1,25,9,7,1,0,0
+Neha Agarwal,neha.agarwal@techcorp.in,Infrastructure,Cloud Engineer,MongoDB,51,1,0,1,2,33,6,5,1,10.88,0
+Vikram Singh,vikram.singh@techcorp.in,Engineering,Tech Lead,MongoDB,12,3,2,1,1,14,4,7,1,0,0
+Amit Tiwari,amit.tiwari@techcorp.in,Security,Security Analyst,MySQL,48,3,3,0,2,18,10,3,1,0,0
+Meera Joshi,meera.joshi@techcorp.in,Infrastructure,DBA,MySQL,24,2,2,0,2,18,10,8,0,0,0
+Neha Agarwal,neha.agarwal@techcorp.in,Infrastructure,Cloud Engineer,MongoDB,6,3,3,0,1,38,21,3,1,0,0
+Neha Agarwal,neha.agarwal@techcorp.in,Infrastructure,Cloud Engineer,Oracle,-16,1,0,1,8,40,5,7,1,100,1
+Pooja Mishra,pooja.mishra@techcorp.in,Security,CISO,Redis,60,0,0,0,2,2,4,10,0,0,0
+Priya Sharma,priya.sharma@techcorp.in,Engineering,Junior Developer,SQL Server,27,1,1,0,1,42,1,9,0,0,0
+Amit Tiwari,amit.tiwari@techcorp.in,Security,Security Analyst,PostgreSQL,60,1,1,0,1,47,10,9,0,0,0
+Suresh Pandey,suresh.pandey@techcorp.in,Operations,Ops Manager,MySQL,30,2,2,0,2,30,5,4,1,0,0
+Neha Agarwal,neha.agarwal@techcorp.in,Infrastructure,Cloud Engineer,PostgreSQL,2,2,2,0,1,69,2,8,1,0,0
+Priya Sharma,priya.sharma@techcorp.in,Engineering,Junior Developer,MongoDB,24,2,2,0,2,160,25,7,1,0,0

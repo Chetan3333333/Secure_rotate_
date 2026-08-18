@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecureRotate</title>
+    <link rel="stylesheet" href="/styles.css?v=3" />
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">SR</div>
+          <div>
+            <strong>SecureRotate</strong>
+            <span>Admin Dashboard</span>
+          </div>
+        </div>
+        <nav class="nav-tabs" aria-label="Main views">
+          <button class="active" data-view="dashboard">Dashboard</button>
+          <button data-view="explorer">Explorer</button>
+          <button data-view="recommendations">Recommendations</button>
+          <button data-view="notifications">Notifications</button>
+          <button data-view="audit">Audit</button>
+          <button data-view="analytics">Analytics</button>
+        </nav>
+        <div class="model-chip">
+          <span>ML model</span>
+          <strong id="modelVersion">loading</strong>
+        </div>
+      </aside>
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">AI-based database password expiry recommendation</p>
+            <h1>Live credential rotation command center</h1>
+          </div>
+          <div class="global-actions">
+            <label class="search-field">
+              <span>Search</span>
+              <input id="searchInput" type="search" placeholder="database, owner, account" />
+            </label>
+            <label>
+              <span>Risk</span>
+              <select id="riskFilter">
+                <option>All</option>
+                <option>Critical</option>
+                <option>High</option>
+                <option>Medium</option>
+                <option>Low</option>
+              </select>
+            </label>
+            <button id="resetDemo" class="ghost-button">Reset Demo</button>
+            <a class="ghost-link" href="/user">User Portal</a>
+          </div>
+        </header>
+        <section class="view active" id="dashboard">
+          <div class="metric-grid" id="metricGrid"></div>
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Risk distribution</p>
+                  <h2>Current credential posture</h2>
+                </div>
+              </div>
+              <div id="riskBars" class="bar-chart"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Seven-day window</p>
+                  <h2>Upcoming expirations</h2>
+                </div>
+              </div>
+              <div id="expiryList" class="expiry-list"></div>
+            </section>
+          </div>
+          <section class="split-view">
+            <div class="panel table-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Credential explorer</p>
+                  <h2>Prioritized accounts</h2>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Credential</th>
+                      <th>Environment</th>
+                      <th>Risk</th>
+                      <th>Expiry</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="credentialRows"></tbody>
+                </table>
+              </div>
+            </div>
+            <aside class="panel detail-panel" id="detailPanel"></aside>
+          </section>
+        </section>
+        <section class="view" id="explorer">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Searchable metadata</p>
+                <h2>Database credential inventory</h2>
+              </div>
+            </div>
+            <div class="table-wrap large">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Database</th>
+                    <th>User</th>
+                    <th>Owner</th>
+                    <th>Expiry Action</th>
+                  </tr>
+                </thead>
+                <tbody id="explorerRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+        <section class="view" id="recommendations">
+          <div id="recommendationList" class="recommendation-list"></div>
+        </section>
+        <section class="view" id="notifications">
+          <section class="panel">
+            <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <p class="eyebrow">Active Alerts</p>
+                <h2>Notification Command Center</h2>
+              </div>
+              <div class="quick-filters" id="notificationFilters" style="display: flex; gap: 8px;">
+                <button class="active small-button" data-filter="All">All</button>
+                <button class="small-button ghost-button" data-filter="Escalated">Escalated</button>
+                <button class="small-button ghost-button" data-filter="Sent">Sent</button>
+                <button class="small-button ghost-button" data-filter="Reminded">Reminded</button>
+                <button class="small-button ghost-button" data-filter="No Alerts">No Alerts</button>
+              </div>
+            </div>
+            <div class="table-wrap large">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Database</th>
+                    <th>Owner</th>
+                    <th>Days Left</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="notificationList"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+        <section class="view" id="audit">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Immutable-style event log</p>
+                <h2>Audit and history</h2>
+              </div>
+            </div>
+            <div id="auditList" class="audit-list"></div>
+          </section>
+        </section>
+        <section class="view" id="analytics">
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Expiry trend</p>
+                  <h2>Accounts by expiry bucket</h2>
+                </div>
+              </div>
+              <div id="expiryBuckets" class="bar-chart"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Explainability</p>
+                  <h2>Top risk factors</h2>
+                </div>
+              </div>
+              <div id="factorBars" class="bar-chart"></div>
+            </section>
+          </div>
+          <div class="section-divider">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Deep Dive</p>
+                <h2>Advanced Analytics</h2>
+              </div>
+            </div>
+          </div>
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Credentials by Role</h2>
+                </div>
+              </div>
+              <div id="plot-credentials-by-role" class="plotly-container"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Credentials by Department</h2>
+                </div>
+              </div>
+              <div id="plot-credentials-by-department" class="plotly-container"></div>
+            </section>
+            <section class="panel full-width">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Expiry Timeline</h2>
+                </div>
+              </div>
+              <div id="plot-expiry-timeline" class="plotly-container tall"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Action Distribution</h2>
+                </div>
+              </div>
+              <div id="plot-action-distribution" class="plotly-container"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Audit Activity</h2>
+                </div>
+              </div>
+              <div id="plot-audit-activity" class="plotly-container"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Rotation Status</h2>
+                </div>
+              </div>
+              <div id="plot-rotation-status" class="plotly-container"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Verification Status</h2>
+                </div>
+              </div>
+              <div id="plot-verification-status" class="plotly-container"></div>
+            </section>
+            <section class="panel full-width">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Analytics</p>
+                  <h2>Rotation vs Verification</h2>
+                </div>
+              </div>
+              <div id="plot-rotation-vs-verification" class="plotly-container tall"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js?v=11"></script>
+  </body>
+</html>

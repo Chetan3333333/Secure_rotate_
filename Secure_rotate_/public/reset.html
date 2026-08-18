@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SecureRotate — Reset Password</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: 'Inter', system-ui, sans-serif;
+        background: #0a0e17;
+        color: #c8cdd6;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .reset-container {
+        width: 100%;
+        max-width: 440px;
+        padding: 24px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 36px;
+        justify-content: center;
+      }
+      .brand-mark {
+        width: 40px; height: 40px;
+        background: linear-gradient(135deg, #1a73e8, #0d47a1);
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        color: #fff; font-weight: 700; font-size: 15px;
+      }
+      .brand strong {
+        color: #e8eaed;
+        font-size: 18px;
+        letter-spacing: -0.3px;
+      }
+
+      .card {
+        background: #141921;
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 14px;
+        padding: 36px 32px;
+      }
+
+      .card h2 {
+        color: #e8eaed;
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        letter-spacing: -0.3px;
+      }
+      .card .subtitle {
+        color: #8b919a;
+        font-size: 14px;
+        margin-bottom: 28px;
+        line-height: 1.5;
+      }
+
+      .db-info {
+        background: rgba(26, 115, 232, 0.08);
+        border: 1px solid rgba(26, 115, 232, 0.15);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 24px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .db-info .db-icon {
+        width: 36px; height: 36px;
+        background: rgba(26, 115, 232, 0.15);
+        border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 18px;
+        flex-shrink: 0;
+      }
+      .db-info .db-details strong {
+        color: #e8eaed;
+        font-size: 14px;
+        display: block;
+      }
+      .db-info .db-details span {
+        color: #8b919a;
+        font-size: 12px;
+      }
+
+      /* Steps indicator */
+      .steps {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        margin-bottom: 28px;
+      }
+      .step-dot {
+        width: 32px; height: 32px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 600;
+        background: #1e2530;
+        color: #6b7280;
+        border: 2px solid #2a3140;
+        transition: all 0.3s;
+      }
+      .step-dot.active {
+        background: #1a73e8;
+        color: #fff;
+        border-color: #1a73e8;
+      }
+      .step-dot.done {
+        background: #10b981;
+        color: #fff;
+        border-color: #10b981;
+      }
+      .step-line {
+        width: 48px; height: 2px;
+        background: #2a3140;
+        transition: background 0.3s;
+      }
+      .step-line.done {
+        background: #10b981;
+      }
+
+      .field {
+        margin-bottom: 18px;
+      }
+      .field label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: #a0a6b0;
+        margin-bottom: 7px;
+      }
+      .field input {
+        width: 100%;
+        padding: 12px 14px;
+        background: #0d1117;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        color: #e8eaed;
+        font-size: 14px;
+        font-family: inherit;
+        transition: border-color 0.2s;
+        outline: none;
+      }
+      .field input:focus {
+        border-color: #1a73e8;
+      }
+      .field .hint {
+        font-size: 11px;
+        color: #6b7280;
+        margin-top: 5px;
+      }
+      .field .error-text {
+        font-size: 11px;
+        color: #e74c3c;
+        margin-top: 5px;
+        display: none;
+      }
+
+      /* OTP input styling */
+      .otp-input {
+        text-align: center;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 12px;
+        padding: 14px !important;
+      }
+
+      .primary-btn {
+        width: 100%;
+        padding: 13px;
+        background: linear-gradient(135deg, #1a73e8, #0d47a1);
+        border: none;
+        border-radius: 8px;
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: opacity 0.2s, transform 0.1s;
+        margin-top: 6px;
+      }
+      .primary-btn:hover { opacity: 0.9; }
+      .primary-btn:active { transform: scale(0.98); }
+      .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .resend-link {
+        display: block;
+        text-align: center;
+        margin-top: 14px;
+        font-size: 13px;
+        color: #60a5fa;
+        cursor: pointer;
+        text-decoration: underline;
+        background: none; border: none; font-family: inherit;
+      }
+      .resend-link:hover { color: #93bbfc; }
+
+      .email-hint {
+        text-align: center;
+        color: #8b919a;
+        font-size: 13px;
+        margin-bottom: 20px;
+        line-height: 1.5;
+      }
+      .email-hint strong {
+        color: #e8eaed;
+      }
+
+      .success-view, .error-view, .loading-spinner {
+        display: none;
+        text-align: center;
+        padding: 20px 0;
+      }
+      .success-view .check-icon {
+        width: 64px; height: 64px;
+        background: rgba(16, 185, 129, 0.12);
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 28px;
+        margin: 0 auto 18px;
+      }
+      .success-view h3 { color: #10b981; font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+      .success-view p { color: #8b919a; font-size: 14px; line-height: 1.6; }
+      .success-view .expiry-badge {
+        display: inline-block; margin-top: 16px; padding: 8px 16px;
+        background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2);
+        border-radius: 8px; color: #10b981; font-size: 13px; font-weight: 600;
+      }
+      .error-view .error-icon {
+        width: 64px; height: 64px;
+        background: rgba(231, 76, 60, 0.12);
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 28px;
+        margin: 0 auto 18px;
+      }
+      .error-view h3 { color: #e74c3c; font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+      .error-view p { color: #8b919a; font-size: 14px; line-height: 1.6; }
+
+      .api-error {
+        background: rgba(231, 76, 60, 0.1);
+        border: 1px solid rgba(231, 76, 60, 0.2);
+        border-radius: 8px;
+        padding: 10px 14px;
+        color: #e74c3c;
+        font-size: 13px;
+        margin-bottom: 16px;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="reset-container">
+      <div class="brand">
+        <div class="brand-mark">SR</div>
+        <strong>SecureRotate</strong>
+      </div>
+
+      <div class="card">
+        <div class="loading-spinner" id="loadingView">Loading...</div>
+
+        <div class="error-view" id="errorView">
+          <div class="error-icon">🚫</div>
+          <h3>Link Expired</h3>
+          <p>This reset link has already been used or is no longer valid. Please contact your administrator for a new link.</p>
+        </div>
+
+        <!-- ====== STEP 1: Send OTP ====== -->
+        <div id="step1View" style="display:none;">
+          <div class="steps">
+            <div class="step-dot active" id="dot1">1</div>
+            <div class="step-line" id="line1"></div>
+            <div class="step-dot" id="dot2">2</div>
+            <div class="step-line" id="line2"></div>
+            <div class="step-dot" id="dot3">3</div>
+          </div>
+          <h2>Identity Verification</h2>
+          <p class="subtitle">To protect your account, we'll send a 6-digit verification code to the email address associated with this database credential.</p>
+          <div class="db-info" id="dbInfo1">
+            <div class="db-icon">🗄️</div>
+            <div class="db-details">
+              <strong id="dbName1">—</strong>
+              <span>User: <span id="dbUser1">—</span></span>
+            </div>
+          </div>
+          <div class="api-error" id="step1Error"></div>
+          <button class="primary-btn" id="sendOtpBtn">Send Verification Code</button>
+        </div>
+
+        <!-- ====== STEP 2: Enter OTP ====== -->
+        <div id="step2View" style="display:none;">
+          <div class="steps">
+            <div class="step-dot done" id="dot1b">✓</div>
+            <div class="step-line done" id="line1b"></div>
+            <div class="step-dot active" id="dot2b">2</div>
+            <div class="step-line" id="line2b"></div>
+            <div class="step-dot" id="dot3b">3</div>
+          </div>
+          <h2>Enter Verification Code</h2>
+          <p class="email-hint">We've sent a 6-digit code to <strong id="emailHint">***</strong></p>
+          <div class="api-error" id="step2Error"></div>
+          <div class="field">
+            <input type="text" id="otpInput" class="otp-input" maxlength="6" placeholder="000000" autocomplete="one-time-code" inputmode="numeric" />
+          </div>
+          <button class="primary-btn" id="verifyOtpBtn">Verify Code</button>
+          <button class="resend-link" id="resendBtn">Didn't receive the code? Resend</button>
+        </div>
+
+        <!-- ====== STEP 3: New Password ====== -->
+        <div id="step3View" style="display:none;">
+          <div class="steps">
+            <div class="step-dot done">✓</div>
+            <div class="step-line done"></div>
+            <div class="step-dot done">✓</div>
+            <div class="step-line done"></div>
+            <div class="step-dot active">3</div>
+          </div>
+          <h2>Set New Password</h2>
+          <p class="subtitle">Your identity has been verified. Choose a strong, new password for your database credential.</p>
+          <div class="db-info" id="dbInfo3">
+            <div class="db-icon">🗄️</div>
+            <div class="db-details">
+              <strong id="dbName3">—</strong>
+              <span>User: <span id="dbUser3">—</span></span>
+            </div>
+          </div>
+          <div class="api-error" id="step3Error"></div>
+          <form id="resetForm">
+            <div class="field">
+              <label for="newPassword">New Password</label>
+              <input type="password" id="newPassword" placeholder="Enter new password" autocomplete="new-password" required />
+              <div class="hint">Minimum 8 characters. Use a mix of letters, numbers, and symbols.</div>
+            </div>
+            <div class="field">
+              <label for="confirmPassword">Confirm Password</label>
+              <input type="password" id="confirmPassword" placeholder="Re-enter new password" autocomplete="new-password" required />
+              <div class="error-text" id="mismatchError">Passwords do not match.</div>
+            </div>
+            <button type="submit" class="primary-btn" id="submitBtn">Reset Password</button>
+          </form>
+        </div>
+
+        <!-- ====== SUCCESS ====== -->
+        <div class="success-view" id="successView">
+          <div class="check-icon">✅</div>
+          <h3>Password Updated!</h3>
+          <p>Your database password has been securely updated and the expiry has been extended.</p>
+          <div class="expiry-badge" id="newExpiryBadge">New expiry: —</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const pathParts = window.location.pathname.split("/");
+        const token = pathParts[pathParts.length - 1];
+
+        const loadingView = document.getElementById("loadingView");
+        const errorView = document.getElementById("errorView");
+        const step1View = document.getElementById("step1View");
+        const step2View = document.getElementById("step2View");
+        const step3View = document.getElementById("step3View");
+        const successView = document.getElementById("successView");
+
+        function hideAll() {
+          [loadingView, errorView, step1View, step2View, step3View, successView].forEach(v => v.style.display = "none");
+        }
+
+        function showError(containerId, msg) {
+          const el = document.getElementById(containerId);
+          el.textContent = msg;
+          el.style.display = "block";
+        }
+
+        // Step 1: Load info
+        loadingView.style.display = "block";
+
+        fetch(`/api/reset/${token}`)
+          .then(r => { if (!r.ok) throw new Error("invalid"); return r.json(); })
+          .then(data => {
+            hideAll();
+            document.getElementById("dbName1").textContent = data.database_name;
+            document.getElementById("dbUser1").textContent = data.username;
+            document.getElementById("dbName3").textContent = data.database_name;
+            document.getElementById("dbUser3").textContent = data.username;
+
+            // If OTP is already verified (e.g., page refresh), skip to step 3
+            if (data.otp_verified) {
+              step3View.style.display = "block";
+            } else {
+              step1View.style.display = "block";
+            }
+          })
+          .catch(() => { hideAll(); errorView.style.display = "block"; });
+
+        // Step 1: Send OTP
+        document.getElementById("sendOtpBtn").addEventListener("click", async () => {
+          const btn = document.getElementById("sendOtpBtn");
+          btn.disabled = true;
+          btn.textContent = "Sending...";
+          document.getElementById("step1Error").style.display = "none";
+
+          try {
+            const res = await fetch(`/api/reset/${token}/send-otp`, { method: "POST", headers: { "Content-Type": "application/json" } });
+            const data = await res.json();
+            if (!res.ok) { showError("step1Error", data.error); btn.disabled = false; btn.textContent = "Send Verification Code"; return; }
+
+            document.getElementById("emailHint").textContent = data.email_hint;
+            hideAll();
+            step2View.style.display = "block";
+            document.getElementById("otpInput").focus();
+          } catch (e) {
+            showError("step1Error", "Network error. Please try again.");
+            btn.disabled = false;
+            btn.textContent = "Send Verification Code";
+          }
+        });
+
+        // Step 2: Verify OTP
+        document.getElementById("verifyOtpBtn").addEventListener("click", async () => {
+          const btn = document.getElementById("verifyOtpBtn");
+          const code = document.getElementById("otpInput").value.trim();
+          if (code.length !== 6) { showError("step2Error", "Please enter the full 6-digit code."); return; }
+          btn.disabled = true;
+          btn.textContent = "Verifying...";
+          document.getElementById("step2Error").style.display = "none";
+
+          try {
+            const res = await fetch(`/api/reset/${token}/verify-otp`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ otp: code }),
+            });
+            const data = await res.json();
+            if (!res.ok) { showError("step2Error", data.error); btn.disabled = false; btn.textContent = "Verify Code"; return; }
+
+            hideAll();
+            step3View.style.display = "block";
+          } catch (e) {
+            showError("step2Error", "Network error. Please try again.");
+            btn.disabled = false;
+            btn.textContent = "Verify Code";
+          }
+        });
+
+        // Resend OTP
+        document.getElementById("resendBtn").addEventListener("click", async () => {
+          const btn = document.getElementById("resendBtn");
+          btn.textContent = "Resending...";
+          try {
+            const res = await fetch(`/api/reset/${token}/send-otp`, { method: "POST", headers: { "Content-Type": "application/json" } });
+            const data = await res.json();
+            if (res.ok) {
+              btn.textContent = "Code resent ✓";
+              document.getElementById("emailHint").textContent = data.email_hint;
+              document.getElementById("otpInput").value = "";
+              document.getElementById("otpInput").focus();
+            } else {
+              btn.textContent = "Resend failed. Try again.";
+            }
+          } catch(e) {
+            btn.textContent = "Network error.";
+          }
+          setTimeout(() => { btn.textContent = "Didn't receive the code? Resend"; }, 3000);
+        });
+
+        // Step 3: Reset Password
+        document.getElementById("resetForm").addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const pwd = document.getElementById("newPassword").value;
+          const confirm = document.getElementById("confirmPassword").value;
+          const mismatch = document.getElementById("mismatchError");
+          mismatch.style.display = "none";
+          document.getElementById("step3Error").style.display = "none";
+
+          if (pwd !== confirm) { mismatch.style.display = "block"; return; }
+          if (pwd.length < 8) { showError("step3Error", "Password must be at least 8 characters."); return; }
+
+          const btn = document.getElementById("submitBtn");
+          btn.disabled = true;
+          btn.textContent = "Updating...";
+
+          try {
+            const res = await fetch(`/api/reset/${token}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ password: pwd }),
+            });
+            const data = await res.json();
+            if (!res.ok) { showError("step3Error", data.error); btn.disabled = false; btn.textContent = "Reset Password"; return; }
+
+            hideAll();
+            successView.style.display = "block";
+            document.getElementById("newExpiryBadge").textContent = `New expiry: ${data.new_expiry}`;
+          } catch (err) {
+            showError("step3Error", "Network error. Please try again.");
+            btn.disabled = false;
+            btn.textContent = "Reset Password";
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
