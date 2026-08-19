@@ -288,8 +288,7 @@ def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float
     # Password strength heuristic (now using Real Machine Learning Score)
     password_strength = credential.get("ml_strength_score", 0) if isinstance(credential, dict) else (credential["ml_strength_score"] if "ml_strength_score" in credential.keys() else 0)
 
-    # MFA status
-    uses_mfa = int(credential.get("uses_mfa", 0) if isinstance(credential, dict) else (credential["uses_mfa"] if "uses_mfa" in credential.keys() else 0))
+
 
     # --- Apply base score based on authoritative expiry window ---
     # Critical: <= 3 days (80-99%)
@@ -314,7 +313,7 @@ def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float
     score -= successful_rotations * 3
     # Adjust risk score based on ML Password Strength (0-100)
     score -= (password_strength - 50) * 0.3
-    score -= uses_mfa * 4
+
     if avg_response_hours > 24:
         score += min(5, (avg_response_hours / 24) * 1.5)
 
@@ -351,10 +350,7 @@ def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float
         factors.append({"label": "Failed rotations", "weight": round(failed_rotations * 12 / 100, 3), "evidence": f"{failed_rotations} of {total_rotations} rotations failed"})
     if successful_rotations > 0:
         factors.append({"label": "Successful rotations", "weight": round(-successful_rotations * 8 / 100, 3), "evidence": f"{successful_rotations} verified rotations"})
-    if not uses_mfa:
-        factors.append({"label": "No MFA", "weight": 0.15, "evidence": "Multi-factor authentication disabled"})
-    else:
-        factors.append({"label": "MFA enabled", "weight": -0.15, "evidence": "Multi-factor authentication active"})
+
     if avg_response_hours > 24:
         factors.append({"label": "Slow response time", "weight": round((avg_response_hours / 24) * 3 / 100, 3), "evidence": f"Avg {round(avg_response_hours, 1)}h to respond"})
     
@@ -460,7 +456,7 @@ def create_user_credential(conn: MySQLConnection, payload: dict) -> dict:
     email = email or extract_email(owner) or extract_email(username)
     if not email:
         raise ValueError("Owner email is required so reminders can be addressed")
-    uses_mfa = int(payload.get("uses_mfa", 0))
+
 
     try:
         expiry = date.fromisoformat(expiry_date)
@@ -479,8 +475,8 @@ def create_user_credential(conn: MySQLConnection, payload: dict) -> dict:
         """
         INSERT INTO credentials (
             database_name, username, owner, email, expiry_date, status, secret_ref,
-            password_hash, password_salt, last_rotated_at, created_at, uses_mfa, ml_strength_score
-        ) VALUES (?, ?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?, ?)
+            password_hash, password_salt, last_rotated_at, created_at, ml_strength_score
+        ) VALUES (?, ?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?)
         """,
         (
             database_name,
@@ -493,7 +489,6 @@ def create_user_credential(conn: MySQLConnection, payload: dict) -> dict:
             salt,
             (today() - timedelta(days=credential_age)).isoformat(),
             iso_now(),
-            uses_mfa,
             ml_score,
         ),
     )
@@ -530,7 +525,7 @@ def init_db() -> None:
                 password_salt VARCHAR(255) NOT NULL,
                 last_rotated_at VARCHAR(30),
                 created_at VARCHAR(30) NOT NULL,
-                uses_mfa TINYINT NOT NULL DEFAULT 0,
+
                 ml_strength_score FLOAT DEFAULT 0
             );
 
@@ -617,8 +612,8 @@ def seed_credentials(conn: MySQLConnection) -> None:
             """
             INSERT INTO credentials (
                 database_name, username, owner, email, expiry_date, status, secret_ref,
-                password_hash, password_salt, last_rotated_at, created_at, uses_mfa
-            ) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, ?)
+                password_hash, password_salt, last_rotated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?)
             """,
             (
                 row[0],
@@ -631,7 +626,6 @@ def seed_credentials(conn: MySQLConnection) -> None:
                 salt,
                 (today() - timedelta(days=90 - row[3])).isoformat(),
                 iso_now(),
-                row[4],
             ),
         )
 
@@ -869,7 +863,7 @@ def recommendation_payload(conn: MySQLConnection, query: dict) -> list[dict]:
             "risk": item["risk"],
             "risk_probability": item["risk_probability"],
             "days_to_expiry": item["days_to_expiry"],
-            "uses_mfa": item.get("uses_mfa", 0),
+
             **item["recommendation"],
             "top_factors": item["risk_factors"],
         }

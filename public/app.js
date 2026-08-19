@@ -306,11 +306,7 @@ function renderRecommendations() {
       if (item.approval_required) {
         badgesHtml += '<span class="approval-badge">\u26A0 Approval Required</span>';
       }
-      if (item.uses_mfa) {
-        badgesHtml += '<span class="mfa-badge mfa-on">\uD83D\uDD12 MFA On</span>';
-      } else {
-        badgesHtml += '<span class="mfa-badge mfa-off">\u26A0 No MFA</span>';
-      }
+
       badgesHtml += '</div>';
 
       var stakeholdersHtml = item.stakeholders.map(function(name) {
