@@ -950,6 +950,10 @@ if os.path.exists(".env"):
                 os.environ[k] = v
 
 app = Flask(__name__, static_folder="public", static_url_path="")
+try:
+    init_db()
+except Exception as e:
+    print(f"Database init error: {e}")
 
 @app.route("/")
 def serve_index():
