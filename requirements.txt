@@ -4,3 +4,6 @@ plotly
 mysql-connector-python
 python-dotenv
 gunicorn
+scikit-learn
+joblib
+scipy

@@ -18,6 +18,7 @@ import base64
 import numpy as np
 from email.message import EmailMessage
 from pathlib import Path
+from recommender import predict_strength
 
 import pandas as pd
 import plotly.express as px
@@ -284,10 +285,8 @@ def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float
                 pass
     avg_response_hours = sum(response_hours_list) / len(response_hours_list) if response_hours_list else 48.0
 
-    # Password strength heuristic (based on hash length and salt presence)
-    pwd_hash = credential.get("password_hash", "") if isinstance(credential, dict) else (credential["password_hash"] if "password_hash" in credential.keys() else "")
-    pwd_salt = credential.get("password_salt", "") if isinstance(credential, dict) else (credential["password_salt"] if "password_salt" in credential.keys() else "")
-    password_strength = min(10, max(3, len(pwd_hash) // 16 + (3 if pwd_salt else 0)))
+    # Password strength heuristic (now using Real Machine Learning Score)
+    password_strength = credential.get("ml_strength_score", 0) if isinstance(credential, dict) else (credential["ml_strength_score"] if "ml_strength_score" in credential.keys() else 0)
 
     # MFA status
     uses_mfa = int(credential.get("uses_mfa", 0) if isinstance(credential, dict) else (credential["uses_mfa"] if "uses_mfa" in credential.keys() else 0))
@@ -313,7 +312,8 @@ def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float
     score += reminders_ignored * 3
     score += failed_rotations * 4
     score -= successful_rotations * 3
-    score -= (password_strength - 5) * 1.5
+    # Adjust risk score based on ML Password Strength (0-100)
+    score -= (password_strength - 50) * 0.3
     score -= uses_mfa * 4
     if avg_response_hours > 24:
         score += min(5, (avg_response_hours / 24) * 1.5)
@@ -357,7 +357,13 @@ def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float
         factors.append({"label": "MFA enabled", "weight": -0.15, "evidence": "Multi-factor authentication active"})
     if avg_response_hours > 24:
         factors.append({"label": "Slow response time", "weight": round((avg_response_hours / 24) * 3 / 100, 3), "evidence": f"Avg {round(avg_response_hours, 1)}h to respond"})
-    factors.append({"label": "Password strength", "weight": round(-password_strength * 3 / 100, 3), "evidence": f"Score: {password_strength}/10"})
+    
+    # Explainable AI: Show the ML Password Strength factor
+    ml_weight = round(-(password_strength - 50) * 0.3 / 100, 3)
+    if password_strength < 50:
+        factors.append({"label": "Weak Password", "weight": ml_weight, "evidence": f"ML Strength: {round(password_strength)}/100"})
+    elif password_strength >= 80:
+        factors.append({"label": "Strong Password", "weight": ml_weight, "evidence": f"ML Strength: {round(password_strength)}/100"})
 
     # Sort factors by absolute weight descending
     factors.sort(key=lambda f: abs(f["weight"]), reverse=True)
@@ -466,12 +472,15 @@ def create_user_credential(conn: MySQLConnection, payload: dict) -> dict:
     salt = secrets.token_hex(16)
     secret_ref = f"vault://securerotate/{database_name.lower().replace(' ', '-')}/{username}"
 
+    ml_result = predict_strength(password)
+    ml_score = ml_result["score"]
+
     cursor = conn.execute(
         """
         INSERT INTO credentials (
             database_name, username, owner, email, expiry_date, status, secret_ref,
-            password_hash, password_salt, last_rotated_at, created_at, uses_mfa
-        ) VALUES (?, ?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?)
+            password_hash, password_salt, last_rotated_at, created_at, uses_mfa, ml_strength_score
+        ) VALUES (?, ?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             database_name,
@@ -485,6 +494,7 @@ def create_user_credential(conn: MySQLConnection, payload: dict) -> dict:
             (today() - timedelta(days=credential_age)).isoformat(),
             iso_now(),
             uses_mfa,
+            ml_score,
         ),
     )
     credential_id = cursor.lastrowid
@@ -520,7 +530,8 @@ def init_db() -> None:
                 password_salt VARCHAR(255) NOT NULL,
                 last_rotated_at VARCHAR(30),
                 created_at VARCHAR(30) NOT NULL,
-                uses_mfa TINYINT NOT NULL DEFAULT 0
+                uses_mfa TINYINT NOT NULL DEFAULT 0,
+                ml_strength_score FLOAT DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS notifications (
@@ -908,13 +919,16 @@ def rotate_credential(conn: MySQLConnection, credential_id: int, actor: str) -> 
     )
 
     if verification_ok:
+        ml_result = predict_strength(password)
+        ml_score = ml_result["score"]
+
         conn.execute(
             """
             UPDATE credentials
-            SET expiry_date = ?, password_hash = ?, password_salt = ?, last_rotated_at = ?, status = 'Active'
+            SET expiry_date = ?, password_hash = ?, password_salt = ?, last_rotated_at = ?, status = 'Active', ml_strength_score = ?
             WHERE id = ?
             """,
-            (new_expiry, hash_secret(password, salt), salt, iso_now(), credential_id),
+            (new_expiry, hash_secret(password, salt), salt, iso_now(), ml_score, credential_id),
         )
         conn.execute("UPDATE notifications SET status = 'Resolved' WHERE credential_id = ? AND status != 'Acknowledged'", (credential_id,))
     else:
@@ -1061,6 +1075,9 @@ def api_user_rotate():
                 salt = secrets.token_hex(16)
                 new_expiry = (today() + timedelta(days=90)).isoformat()
                 
+                ml_result = predict_strength(custom_password)
+                ml_score = ml_result["score"]
+
                 conn.execute(
                     """
                     UPDATE credentials
@@ -1068,10 +1085,11 @@ def api_user_rotate():
                         password_salt = ?,
                         expiry_date = ?,
                         last_rotated_at = ?,
-                        status = 'Active'
+                        status = 'Active',
+                        ml_strength_score = ?
                     WHERE id = ?
                     """,
-                    (hash_secret(custom_password, salt), salt, new_expiry, iso_now(), credential_id)
+                    (hash_secret(custom_password, salt), salt, new_expiry, iso_now(), ml_score, credential_id)
                 )
                 
                 cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
