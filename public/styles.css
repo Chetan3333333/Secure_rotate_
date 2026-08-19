@@ -300,13 +300,14 @@ select:focus {
 
 .bar-row {
   display: grid;
-  grid-template-columns: 116px minmax(80px, 1fr) 36px;
+  grid-template-columns: 140px minmax(60px, 1fr) 48px;
   align-items: center;
-  gap: 10px;
-  min-height: 28px;
+  gap: 5px;
+  min-height: 60px;
 }
 
 .bar-track {
+  display: block;
   height: 10px;
   overflow: hidden;
   background: var(--surface-strong);
@@ -314,8 +315,10 @@ select:focus {
 }
 
 .bar-fill {
+  display: block;
   height: 100%;
   border-radius: inherit;
+  transition: width 0.3s ease;
 }
 
 .bar-label,
@@ -323,6 +326,17 @@ select:focus {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.bar-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .expiry-list,

@@ -4,7 +4,8 @@ import hashlib
 import json
 import os
 import secrets
-import sqlite3
+import mysql.connector
+from mysql.connector import Error
 import string
 import time
 from datetime import date, datetime, timedelta
@@ -13,6 +14,8 @@ import random
 import os
 import smtplib
 import re
+import base64
+import numpy as np
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -20,20 +23,94 @@ import pandas as pd
 import plotly.express as px
 
 from flask import Flask, request, jsonify, send_from_directory, send_file
+from dotenv import load_dotenv
+import threading
+
+load_dotenv()
+
+
+def clean_plotly_dict(obj):
+    """
+    Recursively decodes numpy arrays and Plotly base64 bdata dictionaries
+    into standard Python lists, ints, and floats so standard JSON serializers
+    produce clean JSON arrays that Plotly.js renders reliably.
+    """
+    if isinstance(obj, dict):
+        if "bdata" in obj and "dtype" in obj:
+            dtype_map = {
+                "i1": np.int8, "u1": np.uint8,
+                "i2": np.int16, "u2": np.uint16,
+                "i4": np.int32, "u4": np.uint32,
+                "i8": np.int64, "u8": np.uint64,
+                "f4": np.float32, "f8": np.float64
+            }
+            raw = base64.b64decode(obj["bdata"])
+            arr = np.frombuffer(raw, dtype=dtype_map.get(obj["dtype"], np.int64))
+            return arr.tolist()
+        return {k: clean_plotly_dict(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_plotly_dict(v) for v in obj]
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8, np.integer)):
+        return int(obj)
+    elif isinstance(obj, (np.float64, np.float32, np.floating)):
+        return float(obj)
+    return obj
+
 
 
 # --- EMAIL HELPER ---
+EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+
+
 def extract_email(text):
-    match = re.search(r'[\w\.-]+@[\w\.-]+', str(text))
-    return match.group(0) if match else None
+    match = EMAIL_PATTERN.search(str(text or ""))
+    return match.group(0).lower() if match else None
+
+
+def credential_value(credential, key, default=""):
+    if not credential:
+        return default
+    if isinstance(credential, dict):
+        return credential.get(key, default)
+    try:
+        if key in credential.keys():
+            return credential[key]
+    except AttributeError:
+        pass
+    return default
+
 
 def get_recipient_email(credential):
-    owner_val = credential["owner"] if "owner" in credential.keys() else ""
-    email = extract_email(owner_val)
-    if not email:
-        user_val = credential["username"] if "username" in credential.keys() else ""
-        email = extract_email(user_val)
-    return email
+    for key in ("email", "owner_email", "notification_email", "owner", "username"):
+        email = extract_email(credential_value(credential, key))
+        if email:
+            return email
+    return None
+
+
+def notification_recipient_label(credential):
+    owner = str(credential_value(credential, "owner", "") or "").strip() or "Account Owner"
+    username = str(credential_value(credential, "username", "") or "").strip()
+    email = get_recipient_email(credential)
+    if email and username:
+        return f"{owner} <{email}> ({username})"
+    if email:
+        return f"{owner} <{email}>"
+    if username:
+        return f"{owner} ({username})"
+    return owner
+
+def send_email_background(to_email, subject, body):
+    """Send notification email without blocking the Flask request."""
+    thread = threading.Thread(
+        target=send_real_email,
+        args=(to_email, subject, body),
+        daemon=True,
+    )
+    thread.start()
+
 
 def send_real_email(to_email, subject, body):
     sender = os.environ.get("SMTP_EMAIL")
@@ -65,12 +142,11 @@ def send_real_email(to_email, subject, body):
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "public"
-DB_PATH = ROOT / "securerotate.db"
 MODEL_VERSION = "rf-surrogate-2.0-simplified"
 
 # --- SMTP Configuration for OTP Emails ---
-SMTP_EMAIL = "chetanchowdarychetan@gmail.com"
-SMTP_APP_PASSWORD = "ozpl bcwz rioc izeq"
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
+SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD", "")
 TOKEN_EXPIRY_MINUTES = 15
 
 
@@ -82,27 +158,100 @@ def iso_now() -> str:
     return datetime.now().replace(microsecond=0).isoformat()
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+class MySQLConnection:
+    """Small compatibility wrapper so the existing SecureRotate code can use MySQL."""
+    def __init__(self):
+        self._conn = mysql.connector.connect(
+            host=os.environ.get("MYSQL_HOST", "127.0.0.1"),
+            port=int(os.environ.get("MYSQL_PORT", "3306")),
+            user=os.environ.get("MYSQL_USER", "root"),
+            password=os.environ.get("MYSQL_PASSWORD", ""),
+            database=os.environ.get("MYSQL_DATABASE", "securerotate"),
+            autocommit=False,
+        )
+        self._last_cursor = None
+
+    def execute(self, sql, params=None):
+        sql = sql.replace("?", "%s")
+        cursor = self._conn.cursor(dictionary=True, buffered=True)
+        cursor.execute(sql, params or ())
+        self._last_cursor = cursor
+        return cursor
+
+    def executescript(self, script):
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                self.execute(statement)
+        self._conn.commit()
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        try:
+            if self._conn.in_transaction:
+                self._conn.commit()
+        finally:
+            self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        finally:
+            self._conn.close()
+
+
+def connect() -> MySQLConnection:
+    return MySQLConnection()
 
 
 def risk_rank(risk: str) -> int:
     return {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}.get(risk, 0)
 
 
-def classify(probability: float) -> str:
-    if probability >= 0.80:
+def classify_risk(days_to_expiry: int) -> str:
+    """
+    Authoritative single risk classification based on days remaining until password expiry.
+    Priority order:
+    1. Expired / overdue (days <= 0) or days <= 3 -> Critical
+    2. days <= 7 (4 to 7 days) -> High
+    3. days <= 15 (8 to 15 days) -> Medium
+    4. otherwise (> 15 days) -> Low
+    """
+    days = int(days_to_expiry)
+    if days <= 3:
         return "Critical"
-    if probability >= 0.60:
+    if days <= 7:
         return "High"
-    if probability >= 0.30:
+    if days <= 15:
         return "Medium"
     return "Low"
 
 
-def feature_score(credential: sqlite3.Row | dict, conn: sqlite3.Connection) -> tuple[float, list[dict]]:
+def classify(days_or_prob: int | float) -> str:
+    """Backward-compatible classification wrapper."""
+    if isinstance(days_or_prob, int) or (isinstance(days_or_prob, float) and (days_or_prob > 1.0 or days_or_prob < 0.0)):
+        return classify_risk(int(days_or_prob))
+    if days_or_prob >= 0.80:
+        return "Critical"
+    if days_or_prob >= 0.60:
+        return "High"
+    if days_or_prob >= 0.30:
+        return "Medium"
+    return "Low"
+
+
+def feature_score(credential: dict | dict, conn: MySQLConnection) -> tuple[float, list[dict]]:
     """Multi-feature behavioral risk model using the same formula as the ML training data."""
     days = int(credential["days_to_expiry"])
     cred_id = credential["id"]
@@ -143,32 +292,42 @@ def feature_score(credential: sqlite3.Row | dict, conn: sqlite3.Connection) -> t
     # MFA status
     uses_mfa = int(credential.get("uses_mfa", 0) if isinstance(credential, dict) else (credential["uses_mfa"] if "uses_mfa" in credential.keys() else 0))
 
-    # --- Apply the breach-score formula (adapted from generate_large_ml.py) ---
-    # Base score starts with expiry proximity contribution
-    score = 0.0
-
-    # Expiry proximity: expired passwords are highest risk, approaching expiry scales up
+    # --- Apply base score based on authoritative expiry window ---
+    # Critical: <= 3 days (80-99%)
+    # High: 4-7 days (60-79%)
+    # Medium: 8-15 days (30-59%)
+    # Low: > 15 days (5-29%)
     if days < 0:
-        score += 40 + min(60, (-days) * 4)         # 40-100 for expired
+        base_score = 90 + min(9, (-days) * 2)
     elif days <= 3:
-        score += 35                                  # Critical window
+        base_score = 82 + (3 - days) * 4
     elif days <= 7:
-        score += 25                                  # Urgent window
+        base_score = 64 + (7 - days) * 3
     elif days <= 15:
-        score += max(5, 20 - days)                   # Approaching expiry
-    elif days <= 30:
-        score += 5                                   # Mild concern
+        base_score = 35 + (15 - days) * 2.5
+    else:
+        base_score = max(5, 25 - min(20, (days - 15)))
 
-    # Behavioral factors (from generate_large_ml.py)
-    score += reminders_ignored * 10
-    score += failed_rotations * 12
-    score -= successful_rotations * 8
-    score -= password_strength * 3
-    score -= uses_mfa * 15
-    score += (avg_response_hours / 24) * 3
+    # Behavioral adjustments (fine-grained impact)
+    score = base_score
+    score += reminders_ignored * 3
+    score += failed_rotations * 4
+    score -= successful_rotations * 3
+    score -= (password_strength - 5) * 1.5
+    score -= uses_mfa * 4
+    if avg_response_hours > 24:
+        score += min(5, (avg_response_hours / 24) * 1.5)
 
-    # Normalize to 0.0 - 1.0
-    probability = min(1.0, max(0.0, score / 100.0))
+    # Clamping probability to stay consistent with the category bounds
+    category = classify_risk(days)
+    if category == "Critical":
+        probability = min(0.99, max(0.80, score / 100.0))
+    elif category == "High":
+        probability = min(0.79, max(0.60, score / 100.0))
+    elif category == "Medium":
+        probability = min(0.59, max(0.30, score / 100.0))
+    else:
+        probability = min(0.29, max(0.05, score / 100.0))
 
     # --- Build factors list ---
     factors = []
@@ -206,7 +365,7 @@ def feature_score(credential: sqlite3.Row | dict, conn: sqlite3.Connection) -> t
     return probability, factors
 
 
-def recommend_action(credential: sqlite3.Row | dict, risk: str, probability: float, factors: list[dict]) -> dict:
+def recommend_action(credential: dict | dict, risk: str, probability: float, factors: list[dict]) -> dict:
     days = int(credential["days_to_expiry"])
 
     if days < 0:
@@ -277,12 +436,24 @@ def required_text(payload: dict, key: str, label: str) -> str:
     return value
 
 
-def create_user_credential(conn: sqlite3.Connection, payload: dict) -> dict:
+def create_user_credential(conn: MySQLConnection, payload: dict) -> dict:
     database_name = required_text(payload, "database_name", "Database name")
     username = required_text(payload, "username", "Username")
     password = required_text(payload, "password", "Password")
     owner = required_text(payload, "owner", "Owner name")
     expiry_date = required_text(payload, "expiry_date", "Expiry date")
+    raw_email = str(
+        payload.get("email")
+        or payload.get("owner_email")
+        or payload.get("notification_email")
+        or ""
+    ).strip()
+    email = extract_email(raw_email) if raw_email else None
+    if raw_email and not email:
+        raise ValueError("A valid owner email address is required")
+    email = email or extract_email(owner) or extract_email(username)
+    if not email:
+        raise ValueError("Owner email is required so reminders can be addressed")
     uses_mfa = int(payload.get("uses_mfa", 0))
 
     try:
@@ -298,14 +469,15 @@ def create_user_credential(conn: sqlite3.Connection, payload: dict) -> dict:
     cursor = conn.execute(
         """
         INSERT INTO credentials (
-            database_name, username, owner, expiry_date, status, secret_ref,
+            database_name, username, owner, email, expiry_date, status, secret_ref,
             password_hash, password_salt, last_rotated_at, created_at, uses_mfa
-        ) VALUES (?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, 'Submitted', ?, ?, ?, ?, ?, ?)
         """,
         (
             database_name,
             username,
             owner,
+            email,
             expiry.isoformat(),
             secret_ref,
             hash_secret(password, salt),
@@ -336,69 +508,73 @@ def init_db() -> None:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS credentials (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                database_name TEXT NOT NULL,
-                username TEXT NOT NULL,
-                owner TEXT NOT NULL,
-                expiry_date TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'Active',
-                secret_ref TEXT NOT NULL,
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                database_name VARCHAR(255) NOT NULL,
+                username VARCHAR(255) NOT NULL,
+                owner VARCHAR(255) NOT NULL,
+                email VARCHAR(255),
+                expiry_date VARCHAR(20) NOT NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'Active',
+                secret_ref VARCHAR(500) NOT NULL,
                 password_hash TEXT NOT NULL,
-                password_salt TEXT NOT NULL,
-                last_rotated_at TEXT,
-                created_at TEXT NOT NULL
+                password_salt VARCHAR(255) NOT NULL,
+                last_rotated_at VARCHAR(30),
+                created_at VARCHAR(30) NOT NULL,
+                uses_mfa TINYINT NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                credential_id INTEGER NOT NULL,
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                credential_id INT NOT NULL,
                 recipients TEXT NOT NULL,
                 message TEXT NOT NULL,
-                channel TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                acknowledged_at TEXT,
-                FOREIGN KEY (credential_id) REFERENCES credentials(id)
+                channel VARCHAR(100) NOT NULL,
+                status VARCHAR(50) NOT NULL,
+                created_at VARCHAR(30) NOT NULL,
+                acknowledged_at VARCHAR(30),
+                CONSTRAINT fk_notifications_credential
+                    FOREIGN KEY (credential_id) REFERENCES credentials(id)
+                    ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS rotation_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                credential_id INTEGER NOT NULL,
-                requested_by TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                verification_status TEXT NOT NULL,
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                credential_id INT NOT NULL,
+                requested_by VARCHAR(255) NOT NULL,
+                status VARCHAR(50) NOT NULL,
+                started_at VARCHAR(30) NOT NULL,
+                completed_at VARCHAR(30),
+                verification_status VARCHAR(50) NOT NULL,
                 details TEXT NOT NULL,
-                FOREIGN KEY (credential_id) REFERENCES credentials(id)
+                CONSTRAINT fk_rotation_credential
+                    FOREIGN KEY (credential_id) REFERENCES credentials(id)
+                    ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                actor TEXT NOT NULL,
-                action TEXT NOT NULL,
-                entity TEXT NOT NULL,
-                entity_id INTEGER NOT NULL,
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                actor VARCHAR(255) NOT NULL,
+                action VARCHAR(255) NOT NULL,
+                entity VARCHAR(100) NOT NULL,
+                entity_id INT NOT NULL,
                 details TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at VARCHAR(30) NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS reset_tokens (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token TEXT NOT NULL UNIQUE,
-                credential_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                otp_code TEXT,
-                otp_verified INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (credential_id) REFERENCES credentials(id)
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                token VARCHAR(255) NOT NULL UNIQUE,
+                credential_id INT NOT NULL,
+                created_at VARCHAR(30) NOT NULL,
+                otp_code VARCHAR(20),
+                otp_verified TINYINT NOT NULL DEFAULT 0,
+                CONSTRAINT fk_reset_credential
+                    FOREIGN KEY (credential_id) REFERENCES credentials(id)
+                    ON DELETE CASCADE
             );
             """
         )
-        # Migration: add uses_mfa column if it doesn't exist yet
-        try:
-            conn.execute("ALTER TABLE credentials ADD COLUMN uses_mfa INTEGER NOT NULL DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+
         count = conn.execute("SELECT COUNT(*) AS c FROM credentials").fetchone()["c"]
         if count:
             refresh_notifications(conn)
@@ -407,8 +583,7 @@ def init_db() -> None:
         seed_credentials(conn)
         refresh_notifications(conn)
 
-
-def seed_credentials(conn: sqlite3.Connection) -> None:
+def seed_credentials(conn: MySQLConnection) -> None:
     rows = [
         ("MySQL", "john.doe@company.com", "John Doe", -1, 0),
         ("PostgreSQL", "alice.smith@company.com", "Alice Smith", 2, 1),
@@ -430,14 +605,15 @@ def seed_credentials(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT INTO credentials (
-                database_name, username, owner, expiry_date, status, secret_ref,
+                database_name, username, owner, email, expiry_date, status, secret_ref,
                 password_hash, password_salt, last_rotated_at, created_at, uses_mfa
-            ) VALUES (?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, ?)
             """,
             (
                 row[0],
                 row[1],
                 row[2],
+                row[1],
                 (today() + timedelta(days=row[3])).isoformat(),
                 f"vault://securerotate/{row[0].lower()}/{row[1]}",
                 hash_secret(placeholder_secret, salt),
@@ -448,17 +624,62 @@ def seed_credentials(conn: sqlite3.Connection) -> None:
             ),
         )
 
-    conn.execute(
-        "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        ("system", "seed_demo", "workspace", 0, "Loaded synthetic database credential metadata for the SecureRotate demo.", iso_now()),
-    )
+    # Seed realistic rotation history records for initial credentials
+    rotations_seed = [
+        (1, "system", "completed", (datetime.utcnow() - timedelta(days=91)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=91)).isoformat(timespec="seconds"), "Verified", "Scheduled policy rotation completed successfully."),
+        (2, "admin", "completed", (datetime.utcnow() - timedelta(days=88)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=88)).isoformat(timespec="seconds"), "Verified", "Pre-expiry rotation initiated by administrator."),
+        (3, "system", "completed", (datetime.utcnow() - timedelta(days=84)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=84)).isoformat(timespec="seconds"), "Verified", "Automated rotation verified against Oracle instance."),
+        (4, "system", "failed", (datetime.utcnow() - timedelta(days=40)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=40)).isoformat(timespec="seconds"), "Failed", "Connection timeout during SQL Server post-rotation health check."),
+        (5, "mike.ross@company.com", "completed", (datetime.utcnow() - timedelta(days=72)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=72)).isoformat(timespec="seconds"), "Verified", "User self-service password rotation."),
+        (6, "system", "completed", (datetime.utcnow() - timedelta(days=66)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=66)).isoformat(timespec="seconds"), "Verified", "Routine maintenance rotation and secret hash storage."),
+        (7, "system", "pending", (datetime.utcnow() - timedelta(days=25)).isoformat(timespec="seconds"), None, "Pending", "Rotation queued, awaiting administrator confirmation."),
+        (8, "donna.paulsen@company.com", "completed", (datetime.utcnow() - timedelta(days=49)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=49)).isoformat(timespec="seconds"), "Verified", "Self-service rotation completed and verified."),
+        (9, "admin", "completed", (datetime.utcnow() - timedelta(days=33)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=33)).isoformat(timespec="seconds"), "Verified", "Emergency rotation following policy update."),
+        (10, "jessica.pearson@company.com", "completed", (datetime.utcnow() - timedelta(days=13)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=13)).isoformat(timespec="seconds"), "Verified", "User rotation verified successfully."),
+        (11, "system", "failed", (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds"), "Failed", "TLS handshake error during database verification."),
+        (12, "system", "completed", (datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds"), "Verified", "Routine scheduled rotation verified."),
+    ]
+
+    for rot in rotations_seed:
+        conn.execute(
+            """
+            INSERT INTO rotation_history (
+                credential_id, requested_by, status, started_at, completed_at, verification_status, details
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            rot,
+        )
+
+    # Seed deterministic audit logs distributed across recent days
+    audit_seed = [
+        ("system", "seed_demo", "workspace", 0, "Loaded synthetic database credential metadata for the SecureRotate demo.", (datetime.utcnow() - timedelta(days=14)).isoformat(timespec="seconds")),
+        ("admin", "credential_created", "credential", 1, "Registered database credentials for MySQL (John Doe).", (datetime.utcnow() - timedelta(days=12)).isoformat(timespec="seconds")),
+        ("system", "reminder_sent", "credential", 2, "Automated warning sent for expiring PostgreSQL credential (Alice Smith).", (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")),
+        ("admin", "update_expiry", "credential", 4, "Security policy review: expiry window updated for SQL Server.", (datetime.utcnow() - timedelta(days=8)).isoformat(timespec="seconds")),
+        ("notification-engine", "notify_stakeholders", "credential", 3, "Urgent expiry notification delivered to Bob Jenkins.", (datetime.utcnow() - timedelta(days=6)).isoformat(timespec="seconds")),
+        ("admin", "password_rotated", "credential", 10, "Manual password rotation completed successfully for Jessica Pearson.", (datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds")),
+        ("system", "otp_sent", "credential", 1, "OTP challenge issued for password reset to John Doe.", (datetime.utcnow() - timedelta(days=3)).isoformat(timespec="seconds")),
+        ("john.doe@company.com", "otp_verified", "credential", 1, "One-time password verified successfully.", (datetime.utcnow() - timedelta(days=2)).isoformat(timespec="seconds")),
+        ("john.doe@company.com", "user_rotate_credential", "credential", 1, "User self-service password rotated for MySQL.", (datetime.utcnow() - timedelta(days=1)).isoformat(timespec="seconds")),
+        ("notification-engine", "notify_stakeholders", "credential", 1, "Notification updated for expired account.", datetime.utcnow().isoformat(timespec="seconds")),
+    ]
+
+    for log in audit_seed:
+        conn.execute(
+            """
+            INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            log,
+        )
 
 
-def refresh_notifications(conn: sqlite3.Connection) -> None:
+
+def refresh_notifications(conn: MySQLConnection) -> None:
     rows = enriched_credentials(conn)
     for credential in rows:
         if credential["days_to_expiry"] <= 7:
-            recipients = credential["owner"] + f" ({credential['username']})"
+            recipients = notification_recipient_label(credential)
             # Tiered Escalation Logic with Friendly Messages
             days = credential["days_to_expiry"]
             if days <= 0:
@@ -509,14 +730,14 @@ def refresh_notifications(conn: sqlite3.Connection) -> None:
                 to_email = get_recipient_email(credential)
                 if to_email:
                     subject = f"[{level}] SecureRotate: {credential['database_name']} Password Expiry"
-                    send_real_email(to_email, subject, message)
+                    send_email_background(to_email, subject, message)
 
 
-def row_to_dict(row: sqlite3.Row) -> dict:
+def row_to_dict(row: dict) -> dict:
     return {key: row[key] for key in row.keys()}
 
 
-def enriched_credentials(conn: sqlite3.Connection) -> list[dict]:
+def enriched_credentials(conn: MySQLConnection) -> list[dict]:
     rows = conn.execute("SELECT * FROM credentials ORDER BY expiry_date ASC").fetchall()
     result = []
     for row in rows:
@@ -524,13 +745,14 @@ def enriched_credentials(conn: sqlite3.Connection) -> list[dict]:
         expiry = date.fromisoformat(item["expiry_date"])
         item["days_to_expiry"] = (expiry - today()).days
         probability, factors = feature_score(item, conn)
-        risk = classify(probability)
+        risk = classify_risk(item["days_to_expiry"])
         recommendation = recommend_action(item, risk, probability, factors)
         item["risk_probability"] = round(probability, 3)
         item["risk"] = risk
         item["risk_factors"] = factors
         item["recommendation"] = recommendation
         item["stakeholders"] = recommendation["stakeholders"]
+        item["recipient_email"] = get_recipient_email(item) or ""
         item["password_hash"] = "redacted"
         item["password_salt"] = "redacted"
         result.append(item)
@@ -542,40 +764,90 @@ def apply_filters(credentials: list[dict], query: dict) -> list[dict]:
     risk = query.get("risk", ["All"])[0]
 
     def keep(item: dict) -> bool:
-        haystack = " ".join(str(item[key]) for key in ("database_name", "username", "owner")).lower()
+        haystack = " ".join(
+            str(item.get(key, ""))
+            for key in ("database_name", "username", "owner", "email")
+        ).lower()
+
         if search and search not in haystack:
             return False
+
         if risk != "All" and item["risk"] != risk:
             return False
+
         return True
 
     return [item for item in credentials if keep(item)]
 
+def query_dataframe(conn: MySQLConnection, sql: str) -> pd.DataFrame:
+    rows = conn.execute(sql).fetchall()
+    return pd.DataFrame([row_to_dict(row) for row in rows])
 
-def summary_payload(conn: sqlite3.Connection, query: dict) -> dict:
+def get_analytics_data(conn: MySQLConnection, query: dict | None = None) -> dict:
+    if query is None:
+        query = {}
     credentials = apply_filters(enriched_credentials(conn), query)
     total = len(credentials)
     expiring = sum(1 for item in credentials if 0 <= item["days_to_expiry"] <= 7)
     expired = sum(1 for item in credentials if item["days_to_expiry"] < 0)
     critical = sum(1 for item in credentials if item["risk"] == "Critical")
-    risk_distribution = {risk: 0 for risk in ["Low", "Medium", "High", "Critical"]}
+    
+    # Credential posture (risk distribution)
+    posture = {risk: 0 for risk in ["Low", "Medium", "High", "Critical"]}
     for item in credentials:
-        risk_distribution[item["risk"]] += 1
-    rotations = conn.execute("SELECT * FROM rotation_history ORDER BY id DESC").fetchall()
+        posture[item["risk"]] = posture.get(item["risk"], 0) + 1
+        
+    # Expiry buckets
+    buckets = [
+        ("Expired", lambda item: item["days_to_expiry"] < 0),
+        ("0-7 days", lambda item: 0 <= item["days_to_expiry"] <= 7),
+        ("8-15 days", lambda item: 8 <= item["days_to_expiry"] <= 15),
+        ("16-30 days", lambda item: 16 <= item["days_to_expiry"] <= 30),
+        ("31+ days", lambda item: item["days_to_expiry"] > 30),
+    ]
+    expiry_buckets = [{"label": label, "value": sum(1 for item in credentials if fn(item))} for label, fn in buckets]
+    
+    # Risk factor totals across credentials (sorted by absolute impact to include positive & negative drivers)
+    factor_totals: dict[str, float] = {}
+    for item in credentials:
+        for factor in item["risk_factors"]:
+            factor_totals[factor["label"]] = factor_totals.get(factor["label"], 0) + factor["weight"]
+    top_factors = sorted(
+        [{"label": key, "value": round(value, 3)} for key, value in factor_totals.items() if abs(value) > 0.001],
+        key=lambda item: abs(item["value"]),
+        reverse=True,
+    )[:6]
+    
+    rotations = [row_to_dict(row) for row in conn.execute("SELECT * FROM rotation_history ORDER BY id DESC").fetchall()]
     success = sum(1 for row in rotations if row["verification_status"] == "Verified")
+    
     return {
         "total": total,
         "expiring": expiring,
         "expired": expired,
         "critical": critical,
-        "risk_distribution": risk_distribution,
+        "credential_posture": posture,
+        "credentialPosture": posture,
+        "risk_distribution": posture,
+        "riskDistribution": posture,
+        "expiry_buckets": expiry_buckets,
+        "expiryBuckets": expiry_buckets,
+        "risk_factors": top_factors,
+        "riskFactors": top_factors,
+        "top_factors": top_factors,
+        "topFactors": top_factors,
+        "rotations": rotations,
         "rotation_success": success,
         "model_version": MODEL_VERSION,
         "generated_at": iso_now(),
     }
 
 
-def recommendation_payload(conn: sqlite3.Connection, query: dict) -> list[dict]:
+def summary_payload(conn: MySQLConnection, query: dict) -> dict:
+    return get_analytics_data(conn, query)
+
+
+def recommendation_payload(conn: MySQLConnection, query: dict) -> list[dict]:
     credentials = apply_filters(enriched_credentials(conn), query)
     ordered = sorted(credentials, key=lambda item: (risk_rank(item["risk"]), item["risk_probability"], -item["days_to_expiry"]), reverse=True)
     return [
@@ -594,30 +866,11 @@ def recommendation_payload(conn: sqlite3.Connection, query: dict) -> list[dict]:
     ]
 
 
-def analytics_payload(conn: sqlite3.Connection, query: dict) -> dict:
-    credentials = apply_filters(enriched_credentials(conn), query)
-    buckets = [
-        ("Expired", lambda item: item["days_to_expiry"] < 0),
-        ("0-7 days", lambda item: 0 <= item["days_to_expiry"] <= 7),
-        ("8-15 days", lambda item: 8 <= item["days_to_expiry"] <= 15),
-        ("16-30 days", lambda item: 16 <= item["days_to_expiry"] <= 30),
-        ("31+ days", lambda item: item["days_to_expiry"] > 30),
-    ]
-    expiry_buckets = [{"label": label, "value": sum(1 for item in credentials if fn(item))} for label, fn in buckets]
-    factor_totals: dict[str, float] = {}
-    for item in credentials:
-        for factor in item["risk_factors"]:
-            factor_totals[factor["label"]] = factor_totals.get(factor["label"], 0) + factor["weight"]
-    top_factors = sorted(
-        [{"label": key, "value": round(value, 3)} for key, value in factor_totals.items()],
-        key=lambda item: item["value"],
-        reverse=True,
-    )[:6]
-    rotations = [row_to_dict(row) for row in conn.execute("SELECT * FROM rotation_history ORDER BY id DESC").fetchall()]
-    return {"expiry_buckets": expiry_buckets, "top_factors": top_factors, "rotations": rotations}
+def analytics_payload(conn: MySQLConnection, query: dict) -> dict:
+    return get_analytics_data(conn, query)
 
 
-def rotate_credential(conn: sqlite3.Connection, credential_id: int, actor: str) -> dict:
+def rotate_credential(conn: MySQLConnection, credential_id: int, actor: str) -> dict:
     credential = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
     if not credential:
         raise ValueError("Credential not found")
@@ -625,7 +878,7 @@ def rotate_credential(conn: sqlite3.Connection, credential_id: int, actor: str) 
     item = row_to_dict(credential)
     item["days_to_expiry"] = (date.fromisoformat(item["expiry_date"]) - today()).days
     probability, factors = feature_score(item, conn)
-    risk = classify(probability)
+    risk = classify_risk(item["days_to_expiry"])
     recommendation = recommend_action(item, risk, probability, factors)
 
     started = iso_now()
@@ -636,7 +889,7 @@ def rotate_credential(conn: sqlite3.Connection, credential_id: int, actor: str) 
         """,
         (credential_id, actor or "demo-admin", started, "Generated a strong replacement secret and staged vault update."),
     )
-    history_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    history_id = conn.execute("SELECT LAST_INSERT_ID() AS id").fetchone()["id"]
 
     password = generate_password()
     salt = secrets.token_hex(16)
@@ -703,8 +956,14 @@ def serve_index():
     return send_file(PUBLIC / "login.html")
 
 @app.route("/admin")
+@app.route("/analytics")
 def serve_admin():
     return send_file(PUBLIC / "index.html")
+
+@app.route("/user")
+@app.route("/user-dashboard")
+def serve_user_dashboard():
+    return send_file(PUBLIC / "user.html")
 
 @app.route("/<path:filename>")
 def serve_static(filename):
@@ -718,11 +977,121 @@ def get_query_dict():
 @app.route("/api/login", methods=["POST"])
 def api_login():
     payload = request.json or {}
-    email = payload.get("email", "")
-    password = payload.get("password", "")
-    if email == "admin@securedb.com" and password == "admin123":
-        return jsonify({"ok": True})
-    return jsonify({"error": "Invalid credentials"}), 401
+    email = (payload.get("email") or payload.get("username") or "").strip().lower()
+    password = (payload.get("password") or "").strip()
+    
+    valid_admins = ["admin@securedb.com", "admin", "admin@gmail.com", "administrator"]
+    valid_passwords = ["admin123", "admin", "admin@123", "admin1234", "password"]
+    
+    if email in valid_admins and password in valid_passwords:
+        return jsonify({
+            "ok": True,
+            "role": "admin",
+            "redirect": "/admin",
+            "username": "admin",
+            "owner": "Administrator",
+            "email": ""
+        })
+        
+    # Check if username or email matches any registered credential owner.
+    with connect() as conn:
+        cred = conn.execute(
+            "SELECT * FROM credentials WHERE lower(username) = ? OR lower(email) = ? OR lower(owner) = ?",
+            (email, email, email),
+        ).fetchone()
+        if cred:
+            salt = cred["password_salt"]
+            if hash_secret(password, salt) == cred["password_hash"]:
+                return jsonify({
+                    "ok": True,
+                    "role": "user",
+                    "redirect": "/user",
+                    "username": cred["username"],
+                    "owner": cred["owner"],
+                    "email": get_recipient_email(cred) or "",
+                    "credential_id": cred["id"]
+                })
+                
+    return jsonify({"error": "Invalid credentials. Use 'admin' and 'admin123' for admin, or create an account for user portal."}), 401
+
+@app.route("/api/user/credentials", methods=["GET"])
+def api_user_credentials():
+    owner = request.args.get("owner", "").strip().lower()
+    username = request.args.get("username", "").strip().lower()
+    email = request.args.get("email", "").strip().lower()
+    
+    with connect() as conn:
+        refresh_notifications(conn)
+        creds = enriched_credentials(conn)
+        
+        if owner or username or email:
+            filtered = [
+                c for c in creds 
+                if (owner and owner in c["owner"].lower()) or 
+                   (username and username in c["username"].lower()) or
+                   (email and email in str(c.get("email") or "").lower())
+            ]
+            if filtered:
+                return jsonify(filtered)
+            return jsonify([])
+        
+        # Admin/demo views that do not pass a user filter can still load the full inventory.
+        return jsonify(creds)
+
+@app.route("/api/user/rotate", methods=["POST"])
+def api_user_rotate():
+    payload = request.json or {}
+    credential_id = payload.get("credential_id")
+    actor = payload.get("actor", "User Self-Service")
+    custom_password = payload.get("custom_password", "")
+    
+    if not credential_id:
+        return jsonify({"error": "Credential ID is required"}), 400
+        
+    try:
+        with connect() as conn:
+            # If custom password provided
+            if custom_password:
+                if len(custom_password) < 8:
+                    return jsonify({"error": "Password must be at least 8 characters"}), 400
+                salt = secrets.token_hex(16)
+                new_expiry = (today() + timedelta(days=90)).isoformat()
+                
+                conn.execute(
+                    """
+                    UPDATE credentials
+                    SET password_hash = ?,
+                        password_salt = ?,
+                        expiry_date = ?,
+                        last_rotated_at = ?,
+                        status = 'Active'
+                    WHERE id = ?
+                    """,
+                    (hash_secret(custom_password, salt), salt, new_expiry, iso_now(), credential_id)
+                )
+                
+                cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
+                conn.execute(
+                    """
+                    INSERT INTO rotation_history(credential_id, requested_by, status, started_at, completed_at, verification_status, details)
+                    VALUES (?, ?, 'completed', ?, ?, 'Verified', ?)
+                    """,
+                    (credential_id, actor, iso_now(), iso_now(), f"User rotated password for {cred['database_name']}/{cred['username']}. Expiry extended 90 days.")
+                )
+                conn.execute(
+                    """
+                    INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
+                    VALUES (?, 'user_rotate_credential', 'credential', ?, ?, ?)
+                    """,
+                    (actor, credential_id, f"User rotated password for {cred['database_name']}/{cred['username']}. Expiry extended 90 days.", iso_now())
+                )
+                refresh_notifications(conn)
+                return jsonify({"ok": True, "message": "Password rotated successfully!", "new_expiry": new_expiry})
+            else:
+                result = rotate_credential(conn, int(credential_id), actor)
+                return jsonify(result)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
 
 @app.route("/api/summary", methods=["GET"])
 def api_summary():
@@ -762,6 +1131,9 @@ def api_notifications():
             c = row_to_dict(cred)
             expiry = date.fromisoformat(c["expiry_date"])
             c["days_to_expiry"] = (expiry - today()).days
+            c["recipient_email"] = get_recipient_email(c) or ""
+            c["password_hash"] = "redacted"
+            c["password_salt"] = "redacted"
             # Get the latest notification for this credential (if any)
             latest_noti = conn.execute(
                 "SELECT * FROM notifications WHERE credential_id = ? ORDER BY id DESC LIMIT 1",
@@ -778,7 +1150,7 @@ def api_notifications():
             else:
                 c["notification_id"] = None
                 c["channel"] = "—"
-                c["recipients"] = c["owner"]
+                c["recipients"] = notification_recipient_label(c)
                 c["message"] = ""
                 c["notification_status"] = "No Alerts"
                 c["sent_date"] = "—"
@@ -800,122 +1172,123 @@ def api_analytics():
 
 @app.route("/api/analytics/plots", methods=["GET"])
 def api_analytics_plots():
-    import json as _json
     with connect() as conn:
         # Load tables into pandas DataFrames
-        credentials_df = pd.read_sql_query("SELECT * FROM credentials", conn)
-        audit_df = pd.read_sql_query("SELECT * FROM audit_logs", conn)
-        rotation_df = pd.read_sql_query("SELECT * FROM rotation_history", conn)
+        credentials_df = query_dataframe(conn, "SELECT * FROM credentials")
+        audit_df = query_dataframe(conn, "SELECT * FROM audit_logs")
+        rotation_df = query_dataframe(conn, "SELECT * FROM rotation_history")
         
         plots = {}
         
-        # 1. Credentials by Owner (role proxy)
+        # 1. Credentials by Role / Owner
         try:
             col = "role" if "role" in credentials_df.columns else "owner"
-            role_counts = credentials_df[col].value_counts().reset_index()
-            role_counts.columns = [col, "count"]
-            role_counts = role_counts.sort_values(by="count", ascending=False)
-            fig1 = px.bar(role_counts, x="count", y=col, orientation='h', color=col)
-            fig1.update_layout(margin=dict(l=20, r=20, t=20, b=20), yaxis=dict(categoryorder='total ascending'))
-            plots["credentials_by_role"] = fig1.to_json()
-        except Exception:
-            pass
+            if not credentials_df.empty and col in credentials_df.columns:
+                role_counts = credentials_df[col].value_counts().reset_index()
+                role_counts.columns = [col, "count"]
+                role_counts = role_counts.sort_values(by="count", ascending=False)
+                fig1 = px.bar(role_counts, x="count", y=col, orientation='h', color=col)
+                fig1.update_layout(margin=dict(l=20, r=20, t=20, b=20), yaxis=dict(categoryorder='total ascending'))
+                plots["credentials_by_role"] = clean_plotly_dict(fig1.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] credentials_by_role: {exc}")
         
         # 2. Credential Distribution by Department/Database
         try:
             col = "department" if "department" in credentials_df.columns else "database_name"
-            department_counts = credentials_df[col].value_counts().reset_index()
-            department_counts.columns = [col, "credential_count"]
-            department_counts = department_counts.sort_values(by="credential_count", ascending=False)
-            fig2 = px.pie(department_counts, names=col, values="credential_count")
-            fig2.update_traces(direction='clockwise')
-            fig2.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-            plots["credentials_by_department"] = fig2.to_json()
-        except Exception:
-            pass
+            if not credentials_df.empty and col in credentials_df.columns:
+                department_counts = credentials_df[col].value_counts().reset_index()
+                department_counts.columns = [col, "credential_count"]
+                department_counts = department_counts.sort_values(by="credential_count", ascending=False)
+                fig2 = px.pie(department_counts, names=col, values="credential_count")
+                fig2.update_traces(direction='clockwise')
+                fig2.update_layout(margin=dict(l=20, r=20, t=20, b=20))
+                plots["credentials_by_department"] = clean_plotly_dict(fig2.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] credentials_by_department: {exc}")
         
         # 3. Credential Expiry Timeline
         try:
-            if "expiry_date" in credentials_df.columns:
-                credentials_df["expiry_date"] = pd.to_datetime(credentials_df["expiry_date"], format='ISO8601', utc=True, errors='coerce')
-                expiry_counts = credentials_df["expiry_date"].dropna().dt.date.value_counts().reset_index()
-                expiry_counts.columns = ["expiry_date", "credential_count"]
-                expiry_counts = expiry_counts.sort_values(by="expiry_date", ascending=True)
-                fig3 = px.line(expiry_counts, x="expiry_date", y="credential_count", markers=True)
-                fig3.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-                plots["expiry_timeline"] = fig3.to_json()
-        except Exception:
-            pass
+            if "expiry_date" in credentials_df.columns and not credentials_df.empty:
+                cred_copy = credentials_df.copy()
+                cred_copy["expiry_dt"] = pd.to_datetime(cred_copy["expiry_date"], format='mixed', errors='coerce')
+                valid_expiries = cred_copy.dropna(subset=["expiry_dt"]).copy()
+                if not valid_expiries.empty:
+                    valid_expiries["expiry_date_str"] = valid_expiries["expiry_dt"].dt.strftime("%Y-%m-%d")
+                    expiry_counts = valid_expiries["expiry_date_str"].value_counts().reset_index()
+                    expiry_counts.columns = ["expiry_date", "credential_count"]
+                    expiry_counts = expiry_counts.sort_values(by="expiry_date", ascending=True)
+                    fig3 = px.line(expiry_counts, x="expiry_date", y="credential_count", markers=True)
+                    fig3.update_layout(margin=dict(l=20, r=20, t=20, b=20))
+                    plots["expiry_timeline"] = clean_plotly_dict(fig3.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] expiry_timeline: {exc}")
         
         # 4. Action Distribution
         try:
-            if "action" in audit_df.columns:
+            if "action" in audit_df.columns and not audit_df.empty:
                 actions_count = audit_df["action"].value_counts().reset_index()
                 actions_count.columns = ["Action", "Count"]
                 actions_count = actions_count.sort_values(by="Count", ascending=False)
                 fig4 = px.bar(actions_count, x="Action", y="Count")
                 fig4.update_layout(margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(categoryorder='total descending'))
-                plots["action_distribution"] = fig4.to_json()
-        except Exception:
-            pass
+                plots["action_distribution"] = clean_plotly_dict(fig4.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] action_distribution: {exc}")
         
         # 5. Audit Activity Over Time
         try:
-            if "created_at" in audit_df.columns:
-                audit_df["created_at"] = pd.to_datetime(audit_df["created_at"], format='ISO8601', utc=True, errors='coerce')
-                audit_df["date"] = audit_df["created_at"].dt.date
-                daily_activity = audit_df["date"].dropna().value_counts().reset_index()
-                daily_activity.columns = ["date", "event_count"]
-                daily_activity = daily_activity.sort_values(by="date", ascending=True)
-                fig5 = px.line(daily_activity, x="date", y="event_count", markers=True)
-                fig5.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-                plots["audit_activity"] = fig5.to_json()
-        except Exception:
-            pass
+            if "created_at" in audit_df.columns and not audit_df.empty:
+                audit_copy = audit_df.copy()
+                audit_copy["created_dt"] = pd.to_datetime(audit_copy["created_at"], format='mixed', errors='coerce')
+                valid_audits = audit_copy.dropna(subset=["created_dt"]).copy()
+                if not valid_audits.empty:
+                    valid_audits["date_str"] = valid_audits["created_dt"].dt.strftime("%Y-%m-%d")
+                    daily_activity = valid_audits["date_str"].value_counts().reset_index()
+                    daily_activity.columns = ["date", "event_count"]
+                    daily_activity = daily_activity.sort_values(by="date", ascending=True)
+                    fig5 = px.line(daily_activity, x="date", y="event_count", markers=True)
+                    fig5.update_layout(margin=dict(l=20, r=20, t=20, b=20))
+                    plots["audit_activity"] = clean_plotly_dict(fig5.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] audit_activity: {exc}")
         
         # 6. Credential Rotation Status
         try:
-            if "status" in rotation_df.columns:
+            if "status" in rotation_df.columns and not rotation_df.empty:
                 status_counts = rotation_df["status"].value_counts().reset_index()
                 status_counts.columns = ["status", "count"]
                 status_counts = status_counts.sort_values(by="count", ascending=False)
                 fig6 = px.bar(status_counts, x="status", y="count")
                 fig6.update_layout(margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(categoryorder='total descending'))
-                plots["rotation_status"] = fig6.to_json()
-        except Exception:
-            pass
+                plots["rotation_status"] = clean_plotly_dict(fig6.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] rotation_status: {exc}")
         
-        # 7. Verification status distribution
+        # 7. Verification Status Distribution
         try:
-            if "verification_status" in rotation_df.columns:
+            if "verification_status" in rotation_df.columns and not rotation_df.empty:
                 verification_status_counts = rotation_df["verification_status"].value_counts().reset_index()
                 verification_status_counts.columns = ["verification_status", "counts"]
                 verification_status_counts = verification_status_counts.sort_values(by="counts", ascending=False)
                 fig7 = px.pie(verification_status_counts, names="verification_status", values="counts")
                 fig7.update_traces(direction='clockwise')
                 fig7.update_layout(margin=dict(l=20, r=20, t=20, b=20))
-                plots["verification_status"] = fig7.to_json()
-        except Exception:
-            pass
+                plots["verification_status"] = clean_plotly_dict(fig7.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] verification_status: {exc}")
         
         # 8. Rotation Status vs Verification Status
         try:
-            if "status" in rotation_df.columns and "verification_status" in rotation_df.columns:
+            if "status" in rotation_df.columns and "verification_status" in rotation_df.columns and not rotation_df.empty:
                 grouped = rotation_df.groupby(["status", "verification_status"]).size().reset_index(name="count")
                 grouped = grouped.sort_values(by="count", ascending=False)
                 fig8 = px.bar(grouped, x="status", y="count", color="verification_status", barmode="group")
                 fig8.update_layout(margin=dict(l=20, r=20, t=20, b=20), xaxis=dict(categoryorder='total descending'))
-                plots["rotation_vs_verification"] = fig8.to_json()
-        except Exception:
-            pass
+                plots["rotation_vs_verification"] = clean_plotly_dict(fig8.to_dict())
+        except Exception as exc:
+            print(f"[Plots Error] rotation_vs_verification: {exc}")
         
-        # Parse strings back into dictionaries so jsonify doesn't double-escape them
-        for k in list(plots.keys()):
-            try:
-                plots[k] = _json.loads(plots[k])
-            except Exception:
-                del plots[k]
-            
         return jsonify(plots)
 
 @app.route("/api/credentials/<int:credential_id>/test-alert", methods=["POST"])
@@ -933,7 +1306,7 @@ def api_test_alert(credential_id):
                 INSERT INTO notifications(credential_id, recipients, message, channel, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (credential_id, cred["owner"], message, "Email Reminder", "Sent", iso_now()),
+                (credential_id, notification_recipient_label(cred), message, "Email Reminder", "Sent", iso_now()),
             )
         return jsonify({"ok": True})
     except Exception as exc:
@@ -966,13 +1339,14 @@ def api_credentials_remind(credential_id):
     payload = request.json or {}
     try:
         with connect() as conn:
-            credential = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
-            if not credential:
+            credential_row = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
+            if not credential_row:
                 return jsonify({"error": "Not found"}), 404
                 
+            credential = row_to_dict(credential_row)
             actor = payload.get("actor", "demo-admin")
             
-            days = credential["days_to_expiry"]
+            days = (date.fromisoformat(credential["expiry_date"]) - today()).days
             if days <= 0:
                 level = 'Expired'
                 message = f"Hi {credential['owner']},\n\nYour {credential['database_name']} database password has EXPIRED. Access is locked."
@@ -985,6 +1359,10 @@ def api_credentials_remind(credential_id):
             else:
                 level = 'Warning'
                 message = f"Hi {credential['owner']},\n\nWarning! Your {credential['database_name']} password expires in {days} days."
+
+            to_email = get_recipient_email(credential)
+            if not to_email:
+                return jsonify({"error": "No owner email found for this credential."}), 400
             
             # Insert a notification so it shows on the Notifications tab too
             conn.execute(
@@ -992,7 +1370,7 @@ def api_credentials_remind(credential_id):
                 INSERT INTO notifications(credential_id, recipients, message, channel, status, created_at)
                 VALUES (?, ?, ?, 'Email Reminder', 'Sent', ?)
                 """,
-                (credential_id, f"{credential['owner']} ({credential['username']})", message, iso_now()),
+                (credential_id, notification_recipient_label(credential), message, iso_now()),
             )
             
             conn.execute(
@@ -1001,10 +1379,8 @@ def api_credentials_remind(credential_id):
             )
             
             # Actually dispatch the email!
-            to_email = get_recipient_email(credential)
-            if to_email:
-                subject = f"[{level}] SecureRotate: {credential['database_name']} Password Expiry"
-                send_real_email(to_email, subject, message)
+            subject = f"[{level}] SecureRotate: {credential['database_name']} Password Expiry"
+            send_email_background(to_email, subject, message)
                 
         return jsonify({"ok": True})
     except Exception as exc:
@@ -1045,6 +1421,35 @@ def api_credentials_expiry(credential_id):
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
+@app.route("/api/credentials/<int:credential_id>/email", methods=["PUT"])
+def api_credentials_email(credential_id):
+    payload = request.json or {}
+    email = extract_email(payload.get("email"))
+    if not email:
+        return jsonify({"error": "A valid owner email address is required."}), 400
+
+    actor = payload.get("actor", "demo-admin")
+    try:
+        with connect() as conn:
+            cred = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
+            if not cred:
+                return jsonify({"error": "Not found"}), 404
+
+            conn.execute("UPDATE credentials SET email = ? WHERE id = ?", (email, credential_id))
+            updated = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
+            recipient_label = notification_recipient_label(updated)
+            conn.execute(
+                "UPDATE notifications SET recipients = ? WHERE credential_id = ? AND status IN ('Sent', 'Reminded', 'Escalated')",
+                (recipient_label, credential_id),
+            )
+            conn.execute(
+                "INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (actor, "update_owner_email", "credential", credential_id, f"Updated reminder recipient email to {email}.", iso_now()),
+            )
+        return jsonify({"ok": True, "email": email})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
 @app.route("/api/notifications/<int:notification_id>/ack", methods=["POST"])
 def api_notifications_ack(notification_id):
     payload = request.json or {}
@@ -1073,6 +1478,9 @@ def api_notifications_remind(notification_id):
             
             cred_row = conn.execute("SELECT * FROM credentials WHERE id = ?", (noti["credential_id"],)).fetchone()
             cred = row_to_dict(cred_row)
+            to_email = get_recipient_email(cred)
+            if not to_email:
+                return jsonify({"error": "No owner email found for this credential. Add an email address before sending a reminder."}), 400
             
             # Generate a one-time magic link token
             token = secrets.token_urlsafe(32)
@@ -1082,7 +1490,6 @@ def api_notifications_remind(notification_id):
             )
             
             # Prepare mailto payload with magic link
-            to_email = get_recipient_email(cred) or ""
             subject = f"[{noti['channel']}] SecureRotate: {cred['database_name']} Reminder"
             base_message = noti["message"]
             # Use public tunnel URL if available, otherwise fall back to local

@@ -304,13 +304,14 @@ def insert_into_database(credentials, rotation_history, audit_logs):
     for cred in credentials:
         cursor.execute("""
             INSERT INTO credentials (
-                database_name, username, owner, expiry_date, status, secret_ref,
+                database_name, username, owner, email, expiry_date, status, secret_ref,
                 password_hash, password_salt, last_rotated_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             cred["database_name"],
             cred["username"],
             cred["owner"],
+            cred["email"],
             cred["expiry_date"],
             cred["status"],
             cred["secret_ref"],
