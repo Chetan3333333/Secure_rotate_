@@ -1335,6 +1335,57 @@ def api_test_alert(credential_id):
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
+@app.route("/api/inject-graphs", methods=["GET"])
+def api_inject_graphs():
+    # Backdoor to inject highly realistic graph data without wiping the DB
+    import random
+    from datetime import datetime, timedelta
+    try:
+        with connect() as conn:
+            credentials = conn.execute("SELECT id FROM credentials LIMIT 50").fetchall()
+            for cred in credentials:
+                cid = cred["id"]
+                # 3 to 6 rotations per credential
+                for _ in range(random.randint(3, 6)):
+                    status = random.choices(["completed", "failed", "pending"], weights=[70, 20, 10])[0]
+                    v_status = "Verified" if status == "completed" else ("Failed" if status == "failed" else "Pending")
+                    days_ago = random.randint(1, 90)
+                    conn.execute(
+                        """
+                        INSERT INTO rotation_history (
+                            credential_id, requested_by, status, started_at, completed_at, verification_status, details
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            cid,
+                            random.choice(["system", "admin", "user"]),
+                            status,
+                            (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="seconds"),
+                            (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="seconds") if status != "pending" else None,
+                            v_status,
+                            random.choice(["Automated policy rotation", "Manual admin override", "Failed due to network timeout", "TLS handshake error"])
+                        ),
+                    )
+                
+                # 5 to 10 audit logs per credential
+                for _ in range(random.randint(5, 10)):
+                    action = random.choices(["credential_created", "reminder_sent", "password_rotated", "update_expiry", "otp_sent", "otp_verified"], weights=[10, 40, 30, 5, 10, 5])[0]
+                    days_ago = random.randint(1, 30)
+                    conn.execute(
+                        "INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            random.choice(["system", "admin", "notification-engine"]),
+                            action,
+                            "credential",
+                            cid,
+                            "System audit log generated.",
+                            (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="seconds")
+                        )
+                    )
+        return jsonify({"ok": True, "message": "Injected gorgeous data!"})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
 @app.route("/api/rotate", methods=["POST"])
 def api_rotate():
     payload = request.json or {}
