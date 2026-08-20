@@ -585,35 +585,47 @@ def init_db() -> None:
         if count:
             refresh_notifications(conn)
             return
-
-        seed_credentials(conn)
-        refresh_notifications(conn)
-
 def seed_credentials(conn: MySQLConnection) -> None:
-    rows = [
-        ("MySQL", "john.doe@company.com", "John Doe", -1, 0),
-        ("PostgreSQL", "alice.smith@company.com", "Alice Smith", 2, 1),
-        ("Oracle", "bob.jenkins@company.com", "Bob Jenkins", 6, 1),
-        ("SQL Server", "sarah.connor@company.com", "Sarah Connor", 9, 0),
-        ("MySQL", "mike.ross@company.com", "Mike Ross", 18, 1),
-        ("PostgreSQL", "harvey.specter@company.com", "Harvey Specter", 24, 1),
-        ("Oracle", "rachel.zane@company.com", "Rachel Zane", 33, 0),
-        ("SQL Server", "donna.paulsen@company.com", "Donna Paulsen", 41, 1),
-        ("MySQL", "louis.litt@company.com", "Louis Litt", 57, 1),
-        ("PostgreSQL", "jessica.pearson@company.com", "Jessica Pearson", 77, 1),
-        ("Oracle", "katrina.bennett@company.com", "Katrina Bennett", 4, 0),
-        ("SQL Server", "alex.williams@company.com", "Alex Williams", 120, 1),
-    ]
+    import random
+    first_names = ["James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "William", "Elizabeth", "David", "Barbara", "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah", "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa", "Matthew", "Betty", "Anthony", "Margaret", "Mark", "Sandra"]
+    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson"]
+    databases = ["MySQL", "PostgreSQL", "Oracle", "SQL Server", "MongoDB", "Redis", "Elasticsearch"]
+    
+    rows = []
+    # Force a few specific ones for the top of the dashboard
+    rows.append(("MySQL", "john.doe@company.com", "John Doe", 0))
+    rows.append(("PostgreSQL", "alice.smith@company.com", "Alice Smith", 2))
+    rows.append(("Oracle", "bob.jenkins@company.com", "Bob Jenkins", 6))
+    
+    # Generate the rest up to 67
+    for _ in range(64):
+        fname = random.choice(first_names)
+        lname = random.choice(last_names)
+        email = f"{fname.lower()}.{lname.lower()}@company.com"
+        owner = f"{fname} {lname}"
+        db = random.choice(databases)
+        # Expiry skewed: some negative (expired), mostly healthy (10 to 90 days)
+        days = random.randint(-5, 90)
+        rows.append((db, email, owner, days))
 
     for row in rows:
         salt = secrets.token_hex(16)
-        placeholder_secret = generate_password()
+        
+        # Randomly choose if this user has a weak or strong password for analytics variety
+        if random.random() > 0.3:
+            placeholder_secret = generate_password() # Strong
+        else:
+            placeholder_secret = random.choice(["password123", "admin", "welcome", "12345678", "qwerty", "company2024"]) # Weak
+            
+        ml_result = predict_strength(placeholder_secret)
+        ml_score = ml_result["score"]
+        
         conn.execute(
             """
             INSERT INTO credentials (
                 database_name, username, owner, email, expiry_date, status, secret_ref,
-                password_hash, password_salt, last_rotated_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?)
+                password_hash, password_salt, last_rotated_at, created_at, ml_strength_score
+            ) VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, ?)
             """,
             (
                 row[0],
@@ -626,6 +638,7 @@ def seed_credentials(conn: MySQLConnection) -> None:
                 salt,
                 (today() - timedelta(days=90 - row[3])).isoformat(),
                 iso_now(),
+                ml_score
             ),
         )
 
