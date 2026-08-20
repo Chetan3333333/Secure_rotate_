@@ -585,6 +585,10 @@ def init_db() -> None:
         if count:
             refresh_notifications(conn)
             return
+
+        seed_credentials(conn)
+        refresh_notifications(conn)
+
 def seed_credentials(conn: MySQLConnection) -> None:
     import random
     first_names = ["James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "William", "Elizabeth", "David", "Barbara", "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah", "Charles", "Karen", "Christopher", "Nancy", "Daniel", "Lisa", "Matthew", "Betty", "Anthony", "Margaret", "Mark", "Sandra"]
@@ -641,57 +645,47 @@ def seed_credentials(conn: MySQLConnection) -> None:
                 ml_score
             ),
         )
+    # Seed realistic rotation history records dynamically for the 67 credentials
+    for i in range(1, 68):
+        # Generate 1 to 3 rotations per user
+        for _ in range(random.randint(1, 3)):
+            status = random.choice(["completed", "completed", "completed", "failed", "pending"])
+            v_status = "Verified" if status == "completed" else ("Failed" if status == "failed" else "Pending")
+            days_ago = random.randint(1, 90)
+            
+            conn.execute(
+                """
+                INSERT INTO rotation_history (
+                    credential_id, requested_by, status, started_at, completed_at, verification_status, details
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    i,
+                    random.choice(["system", "admin", "user"]),
+                    status,
+                    (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="seconds"),
+                    (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="seconds") if status != "pending" else None,
+                    v_status,
+                    "Automated password rotation."
+                ),
+            )
 
-    # Seed realistic rotation history records for initial credentials
-    rotations_seed = [
-        (1, "system", "completed", (datetime.utcnow() - timedelta(days=91)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=91)).isoformat(timespec="seconds"), "Verified", "Scheduled policy rotation completed successfully."),
-        (2, "admin", "completed", (datetime.utcnow() - timedelta(days=88)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=88)).isoformat(timespec="seconds"), "Verified", "Pre-expiry rotation initiated by administrator."),
-        (3, "system", "completed", (datetime.utcnow() - timedelta(days=84)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=84)).isoformat(timespec="seconds"), "Verified", "Automated rotation verified against Oracle instance."),
-        (4, "system", "failed", (datetime.utcnow() - timedelta(days=40)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=40)).isoformat(timespec="seconds"), "Failed", "Connection timeout during SQL Server post-rotation health check."),
-        (5, "mike.ross@company.com", "completed", (datetime.utcnow() - timedelta(days=72)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=72)).isoformat(timespec="seconds"), "Verified", "User self-service password rotation."),
-        (6, "system", "completed", (datetime.utcnow() - timedelta(days=66)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=66)).isoformat(timespec="seconds"), "Verified", "Routine maintenance rotation and secret hash storage."),
-        (7, "system", "pending", (datetime.utcnow() - timedelta(days=25)).isoformat(timespec="seconds"), None, "Pending", "Rotation queued, awaiting administrator confirmation."),
-        (8, "donna.paulsen@company.com", "completed", (datetime.utcnow() - timedelta(days=49)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=49)).isoformat(timespec="seconds"), "Verified", "Self-service rotation completed and verified."),
-        (9, "admin", "completed", (datetime.utcnow() - timedelta(days=33)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=33)).isoformat(timespec="seconds"), "Verified", "Emergency rotation following policy update."),
-        (10, "jessica.pearson@company.com", "completed", (datetime.utcnow() - timedelta(days=13)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=13)).isoformat(timespec="seconds"), "Verified", "User rotation verified successfully."),
-        (11, "system", "failed", (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds"), "Failed", "TLS handshake error during database verification."),
-        (12, "system", "completed", (datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds"), (datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds"), "Verified", "Routine scheduled rotation verified."),
-    ]
-
-    for rot in rotations_seed:
-        conn.execute(
-            """
-            INSERT INTO rotation_history (
-                credential_id, requested_by, status, started_at, completed_at, verification_status, details
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            rot,
-        )
-
-    # Seed deterministic audit logs distributed across recent days
-    audit_seed = [
-        ("system", "seed_demo", "workspace", 0, "Loaded synthetic database credential metadata for the SecureRotate demo.", (datetime.utcnow() - timedelta(days=14)).isoformat(timespec="seconds")),
-        ("admin", "credential_created", "credential", 1, "Registered database credentials for MySQL (John Doe).", (datetime.utcnow() - timedelta(days=12)).isoformat(timespec="seconds")),
-        ("system", "reminder_sent", "credential", 2, "Automated warning sent for expiring PostgreSQL credential (Alice Smith).", (datetime.utcnow() - timedelta(days=10)).isoformat(timespec="seconds")),
-        ("admin", "update_expiry", "credential", 4, "Security policy review: expiry window updated for SQL Server.", (datetime.utcnow() - timedelta(days=8)).isoformat(timespec="seconds")),
-        ("notification-engine", "notify_stakeholders", "credential", 3, "Urgent expiry notification delivered to Bob Jenkins.", (datetime.utcnow() - timedelta(days=6)).isoformat(timespec="seconds")),
-        ("admin", "password_rotated", "credential", 10, "Manual password rotation completed successfully for Jessica Pearson.", (datetime.utcnow() - timedelta(days=5)).isoformat(timespec="seconds")),
-        ("system", "otp_sent", "credential", 1, "OTP challenge issued for password reset to John Doe.", (datetime.utcnow() - timedelta(days=3)).isoformat(timespec="seconds")),
-        ("john.doe@company.com", "otp_verified", "credential", 1, "One-time password verified successfully.", (datetime.utcnow() - timedelta(days=2)).isoformat(timespec="seconds")),
-        ("john.doe@company.com", "user_rotate_credential", "credential", 1, "User self-service password rotated for MySQL.", (datetime.utcnow() - timedelta(days=1)).isoformat(timespec="seconds")),
-        ("notification-engine", "notify_stakeholders", "credential", 1, "Notification updated for expired account.", datetime.utcnow().isoformat(timespec="seconds")),
-    ]
-
-    for log in audit_seed:
-        conn.execute(
-            """
-            INSERT INTO audit_logs(actor, action, entity, entity_id, details, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            log,
-        )
-
-
+    # Seed deterministic audit logs
+    for i in range(1, 68):
+        for _ in range(random.randint(1, 4)):
+            action = random.choice(["credential_created", "reminder_sent", "password_rotated", "update_expiry", "otp_sent", "otp_verified"])
+            days_ago = random.randint(1, 14)
+            conn.execute(
+                "INSERT INTO audit_logs (actor, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    random.choice(["system", "admin", "notification-engine"]),
+                    action,
+                    "credential",
+                    i,
+                    "Automated system audit trail log.",
+                    (datetime.utcnow() - timedelta(days=days_ago)).isoformat(timespec="seconds")
+                )
+            )
 
 def refresh_notifications(conn: MySQLConnection) -> None:
     rows = enriched_credentials(conn)
